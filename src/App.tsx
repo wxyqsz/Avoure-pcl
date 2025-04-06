@@ -16,6 +16,7 @@ import Beauty from "../src/pages/Beauty";
 import Lifestyle from "../src/pages/Lifestyle";
 import Shopping from "../src/pages/Shopping";
 import SetupAdmin from './pages/SetupAdmin';
+import UserBlogs from './pages/UserBlogs';
 
 function App() {
   const [supabaseInitialized, setSupabaseInitialized] = useState(false);
@@ -63,6 +64,7 @@ function App() {
             <Route path="/lifestyle" element={<Lifestyle />} />
             <Route path="/shopping" element={<Shopping />} />
             <Route path="/setup-admin" element={<SetupAdmin />} />
+            <Route path="/admin/user-blogs" element={<UserBlogs />} />
             {/* Add more routes as needed */}
           </Routes>
         </div>

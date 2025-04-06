@@ -64,6 +64,7 @@ const AdminDashboard: React.FC = () => {
           <h3 className="text-xl font-medium mb-3">User Management</h3>
           <p className="text-gray-600 mb-4">Manage user accounts and permissions</p>
           <button 
+            onClick={() => navigate("/admin/user-blogs")}
             className="bg-green-600 text-white px-4 py-2 rounded hover:bg-green-700"
           >
             Manage Users
