@@ -16,7 +16,20 @@ interface Article {
   likes: number;
   comments: number;
   views: number;
+  status: 'published' | 'pending' | 'rejected';
+  submittedBy?: string;
   additionalImages?: {url: string, caption: string, position: number}[];
+}
+
+// Interface for analytics data
+interface AnalyticsData {
+  totalViews: number;
+  totalLikes: number;
+  totalComments: number;
+  mostViewedArticle: Article | null;
+  mostLikedArticle: Article | null;
+  categoryBreakdown: {category: string, count: number}[];
+  recentTrend: {date: string, views: number}[];
 }
 
 // Interface for inline images
@@ -31,7 +44,7 @@ interface InlineImage {
 
 function AdminPage() {
   const navigate = useNavigate();
-  const [activeTab, setActiveTab] = useState<'upload' | 'manage'>('upload');
+  const [activeTab, setActiveTab] = useState<'upload' | 'manage' | 'analytics' | 'submissions'>('upload');
   const [isLoading, setIsLoading] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const inlineFileInputRef = useRef<HTMLInputElement>(null);
@@ -58,12 +71,26 @@ function AdminPage() {
   const [isLoadingBlogs, setIsLoadingBlogs] = useState(false);
   const [deleteInProgress, setDeleteInProgress] = useState<number | null>(null);
   
-  // Load blogs when the manage tab is active
+  // State for managing user submissions
+  const [submissions, setSubmissions] = useState<Article[]>([]);
+  const [isLoadingSubmissions, setIsLoadingSubmissions] = useState(false);
+  const [submissionAction, setSubmissionAction] = useState<{id: number, action: string} | null>(null);
+  
+  // State for analytics
+  const [analyticsData, setAnalyticsData] = useState<AnalyticsData | null>(null);
+  const [isLoadingAnalytics, setIsLoadingAnalytics] = useState(false);
+  const [analyticsTimeframe, setAnalyticsTimeframe] = useState<'week' | 'month' | 'year'>('month');
+  
+  // Load data when tabs are activated
   useEffect(() => {
     if (activeTab === 'manage') {
       fetchBlogs();
+    } else if (activeTab === 'analytics') {
+      fetchAnalytics();
+    } else if (activeTab === 'submissions') {
+      fetchSubmissions();
     }
-  }, [activeTab]);
+  }, [activeTab, analyticsTimeframe]);
   
   // Fetch blogs from Supabase
   const fetchBlogs = async () => {
@@ -72,6 +99,7 @@ function AdminPage() {
       const { data, error } = await supabase
         .from('articles')
         .select('*')
+        .eq('status', 'published')
         .order('date', { ascending: false });
         
       if (error) {
@@ -87,6 +115,193 @@ function AdminPage() {
       });
     } finally {
       setIsLoadingBlogs(false);
+    }
+  };
+  
+  // Fetch user submissions
+  const fetchSubmissions = async () => {
+    setIsLoadingSubmissions(true);
+    try {
+      const { data, error } = await supabase
+        .from('articles')
+        .select('*')
+        .eq('status', 'pending')
+        .order('date', { ascending: false });
+        
+      if (error) {
+        throw error;
+      }
+      
+      setSubmissions(data || []);
+    } catch (error) {
+      console.error('Error fetching submissions:', error);
+      setMessage({ 
+        text: `Failed to load submissions: ${(error as Error).message}`, 
+        type: 'error' 
+      });
+    } finally {
+      setIsLoadingSubmissions(false);
+    }
+  };
+  
+  // Fetch analytics data
+  const fetchAnalytics = async () => {
+    setIsLoadingAnalytics(true);
+    try {
+      // Get date range based on timeframe
+      const now = new Date();
+      let startDate = new Date();
+      
+      if (analyticsTimeframe === 'week') {
+        startDate.setDate(now.getDate() - 7);
+      } else if (analyticsTimeframe === 'month') {
+        startDate.setMonth(now.getMonth() - 1);
+      } else if (analyticsTimeframe === 'year') {
+        startDate.setFullYear(now.getFullYear() - 1);
+      }
+      
+      const startDateStr = startDate.toISOString();
+      
+      // Fetch articles for this time period
+      const { data: articles, error: articlesError } = await supabase
+        .from('articles')
+        .select('*')
+        .eq('status', 'published')
+        .gte('date', startDateStr);
+        
+      if (articlesError) throw articlesError;
+      
+      if (!articles || articles.length === 0) {
+        setAnalyticsData({
+          totalViews: 0,
+          totalLikes: 0,
+          totalComments: 0,
+          mostViewedArticle: null,
+          mostLikedArticle: null,
+          categoryBreakdown: [],
+          recentTrend: []
+        });
+        return;
+      }
+      
+      // Calculate total metrics
+      const totalViews = articles.reduce((sum, article) => sum + (article.views || 0), 0);
+      const totalLikes = articles.reduce((sum, article) => sum + (article.likes || 0), 0);
+      const totalComments = articles.reduce((sum, article) => sum + (article.comments || 0), 0);
+      
+      // Find most viewed and liked articles
+      const mostViewedArticle = [...articles].sort((a, b) => (b.views || 0) - (a.views || 0))[0];
+      const mostLikedArticle = [...articles].sort((a, b) => (b.likes || 0) - (a.likes || 0))[0];
+      
+      // Get category breakdown
+      const categories: {[key: string]: number} = {};
+      articles.forEach(article => {
+        if (!categories[article.category]) {
+          categories[article.category] = 0;
+        }
+        categories[article.category]++;
+      });
+      
+      const categoryBreakdown = Object.entries(categories).map(([category, count]) => ({
+        category,
+        count
+      }));
+      
+      // Create recent trend data (last 10 days)
+      const trendDates: {[key: string]: number} = {};
+      const endDate = new Date();
+      const trendStartDate = new Date();
+      
+      if (analyticsTimeframe === 'week') {
+        trendStartDate.setDate(endDate.getDate() - 7);
+      } else if (analyticsTimeframe === 'month') {
+        trendStartDate.setDate(endDate.getDate() - 30);
+      } else {
+        trendStartDate.setDate(endDate.getDate() - 60);
+      }
+      
+      // Initialize all dates in range
+      let currentDate = new Date(trendStartDate);
+      while (currentDate <= endDate) {
+        const dateStr = currentDate.toISOString().split('T')[0];
+        trendDates[dateStr] = 0;
+        currentDate.setDate(currentDate.getDate() + 1);
+      }
+      
+      // Populate with actual data
+      articles.forEach(article => {
+        const articleDate = new Date(article.date).toISOString().split('T')[0];
+        if (trendDates[articleDate] !== undefined) {
+          trendDates[articleDate] += article.views || 0;
+        }
+      });
+      
+      const recentTrend = Object.entries(trendDates).map(([date, views]) => ({
+        date,
+        views
+      })).sort((a, b) => a.date.localeCompare(b.date));
+      
+      setAnalyticsData({
+        totalViews,
+        totalLikes,
+        totalComments,
+        mostViewedArticle,
+        mostLikedArticle,
+        categoryBreakdown,
+        recentTrend
+      });
+      
+    } catch (error) {
+      console.error('Error fetching analytics:', error);
+      setMessage({
+        text: `Failed to load analytics: ${(error as Error).message}`,
+        type: 'error'
+      });
+    } finally {
+      setIsLoadingAnalytics(false);
+    }
+  };
+  
+  // Handle user submission actions (approve/reject)
+  const handleSubmissionAction = async (id: number, action: 'approve' | 'reject' | 'delete') => {
+    setSubmissionAction({ id, action });
+    
+    try {
+      if (action === 'delete') {
+        if (!window.confirm('Are you sure you want to delete this submission? This action cannot be undone.')) {
+          setSubmissionAction(null);
+          return;
+        }
+        
+        // Delete the submission
+        await handleDeleteBlog(id);
+        
+      } else {
+        const newStatus = action === 'approve' ? 'published' : 'rejected';
+        
+        const { error } = await supabase
+          .from('articles')
+          .update({ status: newStatus })
+          .eq('id', id);
+          
+        if (error) throw error;
+        
+        // Update local state
+        setSubmissions(submissions.filter(sub => sub.id !== id));
+        
+        setMessage({
+          text: `Submission ${action === 'approve' ? 'approved' : 'rejected'} successfully`,
+          type: 'success'
+        });
+      }
+    } catch (error) {
+      console.error(`Error ${action}ing submission:`, error);
+      setMessage({
+        text: `Failed to ${action} submission: ${(error as Error).message}`,
+        type: 'error'
+      });
+    } finally {
+      setSubmissionAction(null);
     }
   };
   
@@ -114,7 +329,6 @@ function AdminPage() {
         if (blogData && blogData.image && blogData.image.includes('blog-images')) {
           try {
             // Extract the filename from the URL
-            // This assumes the URL format ends with /storage/v1/object/public/blog-images/filename.ext
             const urlParts = blogData.image.split('/');
             const fileName = urlParts[urlParts.length - 1];
             
@@ -159,6 +373,7 @@ function AdminPage() {
         
         // Update the UI by removing the deleted blog
         setBlogs(blogs.filter(blog => blog.id !== id));
+        setSubmissions(submissions.filter(sub => sub.id !== id));
         setMessage({ text: 'Blog post deleted successfully', type: 'success' });
         
       } catch (error) {
@@ -340,44 +555,30 @@ function AdminPage() {
 
   const uploadImageToStorage = async (file: File) => {
     try {
-      console.log(`Starting upload for file: ${file.name} (${(file.size / 1024).toFixed(2)}KB, type: ${file.type})`);
-      
       // Generate a unique filename
       const fileExt = file.name.split('.').pop();
       const fileName = `${Date.now()}-${Math.random().toString(36).substring(2, 15)}.${fileExt}`;
-      const filePath = `${fileName}`;
+      const filePath = `${fileName}`; // No subfolder as bucket is already blog-images
       
       // Check file size - Supabase has a limit
       if (file.size > 5 * 1024 * 1024) { // 5MB limit
-        throw new Error(`File size exceeds 5MB limit (${(file.size / (1024 * 1024)).toFixed(2)}MB)`);
+        throw new Error('File size exceeds 5MB limit');
       }
-  
-      console.log(`Uploading file to path: ${filePath}`);
-      
-      // Upload file to Supabase Storage with timeout
-      const uploadPromise = supabase.storage
-        .from('blog-images')
+
+      // Upload file to Supabase Storage
+      const { error: uploadError } = await supabase.storage
+        .from('blog-images') // Using the correct bucket name
         .upload(filePath, file, {
           cacheControl: '3600',
           upsert: false,
-          contentType: file.type
+          contentType: file.type // Explicitly set content type
         });
-      
-      // Create a timeout promise
-      const timeoutPromise = new Promise((_, reject) => {
-        setTimeout(() => reject(new Error('Upload timed out after 30 seconds')), 30000);
-      });
-      
-      // Race the upload against the timeout
-      const { error: uploadError } = await Promise.race([uploadPromise, timeoutPromise]) as any;
-  
+
       if (uploadError) {
         console.error('Upload error details:', uploadError);
         throw new Error(`Upload failed: ${uploadError.message}`);
       }
-  
-      console.log('Upload successful, getting public URL');
-      
+
       // Get public URL
       const { data } = supabase.storage
         .from('blog-images')
@@ -387,7 +588,6 @@ function AdminPage() {
         throw new Error('Failed to get public URL for uploaded file');
       }
       
-      console.log('Retrieved public URL:', data.publicUrl);
       return data.publicUrl;
     } catch (error) {
       console.error('Error in uploadImageToStorage:', error);
@@ -398,7 +598,7 @@ function AdminPage() {
   const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     setIsLoading(true);
-    setMessage({ text: 'Starting blog creation process...', type: 'info' });
+    setMessage({ text: '', type: '' });
     
     try {
       let imageUrl = formData.image;
@@ -407,11 +607,8 @@ function AdminPage() {
       if (selectedFile) {
         setMessage({ text: 'Uploading main image...', type: 'info' });
         try {
-          console.log('Starting main image upload');
           imageUrl = await uploadImageToStorage(selectedFile);
-          console.log('Main image uploaded successfully:', imageUrl);
         } catch (error) {
-          console.error('Main image upload error details:', error);
           throw new Error(`Main image upload failed: ${(error as Error).message}`);
         }
       } else if (!imageUrl) {
@@ -419,36 +616,28 @@ function AdminPage() {
       }
       
       // Upload all inline images and get their URLs
+      setMessage({ text: 'Uploading inline images...', type: 'info' });
       const uploadedInlineImages = [];
       
-      if (inlineImages.length > 0) {
-        setMessage({ text: `Uploading ${inlineImages.length} inline images...`, type: 'info' });
-        console.log(`Processing ${inlineImages.length} inline images`);
-        
-        for (const [index, image] of inlineImages.entries()) {
-          console.log(`Processing inline image ${index + 1}/${inlineImages.length}`);
-          if (image.file) {
-            try {
-              console.log(`Uploading inline image file: ${image.file.name}`);
-              const uploadedUrl = await uploadImageToStorage(image.file);
-              console.log('Inline image uploaded successfully:', uploadedUrl);
-              uploadedInlineImages.push({
-                url: uploadedUrl,
-                caption: image.caption,
-                position: image.position
-              });
-            } catch (error) {
-              console.error(`Inline image ${index} upload error:`, error);
-              throw new Error(`Failed to upload inline image ${index + 1}: ${(error as Error).message}`);
-            }
-          } else if (image.url) {
-            // If it's an external URL, just use that
+      for (const image of inlineImages) {
+        if (image.file) {
+          try {
+            const uploadedUrl = await uploadImageToStorage(image.file);
             uploadedInlineImages.push({
-              url: image.url,
+              url: uploadedUrl,
               caption: image.caption,
               position: image.position
             });
+          } catch (error) {
+            throw new Error(`Failed to upload inline image: ${(error as Error).message}`);
           }
+        } else if (image.url) {
+          // If it's an external URL, just use that
+          uploadedInlineImages.push({
+            url: image.url,
+            caption: image.caption,
+            position: image.position
+          });
         }
       }
       
@@ -458,29 +647,10 @@ function AdminPage() {
         cleanContent = cleanContent.replace(`[IMAGE:${img.id}]`, `[INLINE_IMAGE]`);
       });
       
-      setMessage({ text: 'Creating blog post in database...', type: 'info' });
-      
-      // Add detailed logging before database insertion
-      console.log('Preparing to insert article with data:', {
-        title: formData.title,
-        excerpt: formData.excerpt,
-        contentLength: cleanContent.length,
-        category: formData.category,
-        gender: formData.gender,
-        imageUrl: imageUrl,
-        author: formData.author,
-        inlineImagesCount: uploadedInlineImages.length
-      });
-      
-      // Validate content is not too large
-      const contentSizeInKB = new Blob([cleanContent]).size / 1024;
-      if (contentSizeInKB > 1000) { // Check if larger than ~1MB
-        console.warn('Content size might be too large:', contentSizeInKB.toFixed(2) + 'KB');
-        // Consider truncating or processing content differently
-      }
+      setMessage({ text: 'Creating blog post...', type: 'info' });
       
       // Insert the article with additional images
-      const { data, error } = await supabase
+      const { error } = await supabase
         .from('articles')
         .insert([
           {
@@ -495,15 +665,13 @@ function AdminPage() {
             likes: 0,
             comments: 0,
             views: 0,
-            additionalImages: uploadedInlineImages.length > 0 ? uploadedInlineImages : null
+            status: 'published', // Auto-publish admin posts
+            additionalImages: uploadedInlineImages
           }
-        ])
-        .select();
-  
-      console.log('Database response:', { data, error });
-  
+        ]);
+
       if (error) {
-        console.error('Supabase insertion error details:', error);
+        console.error('Supabase insertion error:', error);
         throw new Error(`Database error: ${error.message}`);
       }
       
@@ -541,11 +709,8 @@ function AdminPage() {
       }, 1500);
       
     } catch (error) {
-      console.error('Error creating blog post:', error);
-      setMessage({ 
-        text: `Error: ${(error as Error).message}. Check browser console for details.`, 
-        type: 'error' 
-      });
+      console.error('Error uploading blog:', error);
+      setMessage({ text: `Error: ${(error as Error).message}`, type: 'error' });
     } finally {
       setIsLoading(false);
     }
@@ -579,418 +744,572 @@ function AdminPage() {
       return dateString;
     }
   };
+  
+  // Format number helper (for analytics)
+  const formatNumber = (num: number) => {
+    if (num >= 1000000) {
+      return (num / 1000000).toFixed(1) + 'M';
+    } else if (num >= 1000) {
+      return (num / 1000).toFixed(1) + 'K';
+    }
+    return num.toString();
+  };
 
   return (
-    <div className="max-w-6xl mx-auto p-6 mt-16 bg-white">
+    <div className="max-w-6xl mx-auto p-6">
       {/* Header with Vogue-inspired styling */}
-      <div className="mb-12 text-center">
-        <h1 className="text-4xl font-serif tracking-wider uppercase mb-2">VOGUE</h1>
-        <div className="w-16 h-px bg-black mx-auto mb-4"></div>
-        <h2 className="text-xl font-light tracking-widest uppercase">Editorial Dashboard</h2>
+      <div className="mb-10 border-b border-black pb-6 mt-24">
+        <h1 className="text-4xl font-serif tracking-tight uppercase text-center mb-2">EDITORIAL DASHBOARD</h1>
+        <p className="text-center text-gray-500 tracking-widest text-sm uppercase">MANAGE CONTENT • REVIEW SUBMISSIONS • MONITOR PERFORMANCE</p>
       </div>
       
-      {/* Tabs - styled with subtle underline */}
-      <div className="flex justify-center border-b border-gray-100 mb-12">
+      {/* Main Navigation Tabs - Vogue-inspired */}
+      <div className="flex justify-center border-b border-gray-200 mb-8">
         <button
-          className={`px-6 py-3 font-light tracking-wider uppercase text-sm ${
+          className={`px-6 py-3 font-medium uppercase tracking-wider text-sm ${
             activeTab === 'upload' 
-              ? 'border-b border-black text-black' 
-              : 'text-gray-400 hover:text-black'
+              ? 'border-b-2 border-black text-black font-bold' 
+              : 'text-gray-500 hover:text-black'
           }`}
           onClick={() => setActiveTab('upload')}
         >
-          Create New Article
+          Admin Upload
         </button>
         <button
-          className={`px-6 py-3 font-light tracking-wider uppercase text-sm ${
+          className={`px-6 py-3 font-medium uppercase tracking-wider text-sm ${
             activeTab === 'manage' 
-              ? 'border-b border-black text-black' 
-              : 'text-gray-400 hover:text-black'
+              ? 'border-b-2 border-black text-black font-bold' 
+              : 'text-gray-500 hover:text-black'
           }`}
           onClick={() => setActiveTab('manage')}
         >
-          Manage Articles
+          Manage Content
+        </button>
+        <button
+          className={`px-6 py-3 font-medium uppercase tracking-wider text-sm ${
+            activeTab === 'submissions' 
+              ? 'border-b-2 border-black text-black font-bold' 
+              : 'text-gray-500 hover:text-black'
+          }`}
+          onClick={() => setActiveTab('submissions')}
+        >
+          User Submissions
+        </button>
+        <button
+          className={`px-6 py-3 font-medium uppercase tracking-wider text-sm ${
+            activeTab === 'analytics' 
+              ? 'border-b-2 border-black text-black font-bold' 
+              : 'text-gray-500 hover:text-black'
+          }`}
+          onClick={() => setActiveTab('analytics')}
+        >
+          Analytics
         </button>
       </div>
       
       {message.text && (
-        <div className={`p-5 mb-8 ${
-          message.type === 'success' ? 'bg-gray-100 text-green-800 border-l-4 border-green-500' : 
-          message.type === 'error' ? 'bg-gray-100 text-red-800 border-l-4 border-red-500' : 
-          'bg-gray-100 text-gray-800 border-l-4 border-gray-500'
-        } font-light`}>
+        <div className={`p-4 mb-6 rounded-md ${
+          message.type === 'success' ? 'bg-green-100 text-green-700' : 
+          message.type === 'error' ? 'bg-red-100 text-red-700' : 
+          'bg-blue-100 text-blue-700'
+        }`}>
           {message.text}
         </div>
       )}
       
-      {/* Upload Blog Form - Vogue Styled */}
+      {/* Upload Blog Form */}
       {activeTab === 'upload' && (
-        <form onSubmit={handleSubmit} className="space-y-8">
-          <div>
-            <label className="block text-xs uppercase tracking-wider text-gray-500 mb-2">Title</label>
-            <input
-              type="text"
-              name="title"
-              value={formData.title}
-              onChange={handleChange}
-              className="w-full border-0 border-b border-gray-200 px-0 py-2 font-light focus:ring-0 focus:border-black"
-              required
-              placeholder="Enter article title"
-            />
-          </div>
-          
-          <div>
-            <label className="block text-xs uppercase tracking-wider text-gray-500 mb-2">Excerpt</label>
-            <textarea
-              name="excerpt"
-              value={formData.excerpt}
-              onChange={handleChange}
-              className="w-full border-0 border-b border-gray-200 px-0 py-2 font-light focus:ring-0 focus:border-black"
-              rows={2}
-              required
-              placeholder="Write a captivating summary"
-            />
-          </div>
-          
-          <div>
-            <label className="block text-xs uppercase tracking-wider text-gray-500 mb-2">Content</label>
+        <div>
+          <h2 className="text-2xl font-serif mb-6 border-l-4 border-black pl-4">Create New Article</h2>
+          <form onSubmit={handleSubmit} className="space-y-6">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Title</label>
+              <input
+                type="text"
+                name="title"
+                value={formData.title}
+                onChange={handleChange}
+                className="w-full border border-gray-300 rounded-md px-3 py-2"
+                required
+                placeholder="Enter article title"
+              />
+            </div>
             
-            {/* Text formatting toolbar - Minimalist */}
-            <div className="flex flex-wrap gap-3 mb-3 p-3 border border-gray-100 bg-gray-50">
-              <button 
-                type="button" 
-                onClick={() => applyFormatting('bold')}
-                className="px-3 py-1 text-xs uppercase tracking-wider hover:bg-gray-100"
-                title="Bold"
-              >
-                Bold
-              </button>
-              <button 
-                type="button" 
-                onClick={() => applyFormatting('italic')}
-                className="px-3 py-1 text-xs uppercase tracking-wider hover:bg-gray-100"
-                title="Italic"
-              >
-                Italic
-              </button>
-              <button 
-                type="button" 
-                onClick={() => applyFormatting('underline')}
-                className="px-3 py-1 text-xs uppercase tracking-wider hover:bg-gray-100"
-                title="Underline"
-              >
-                Underline
-              </button>
-              <div className="h-4 border-r border-gray-200"></div>
-              <button 
-                type="button" 
-                onClick={() => applyFormatting('heading1')}
-                className="px-3 py-1 text-xs uppercase tracking-wider hover:bg-gray-100"
-                title="Heading 1"
-              >
-                H1
-              </button>
-              <button 
-                type="button" 
-                onClick={() => applyFormatting('heading2')}
-                className="px-3 py-1 text-xs uppercase tracking-wider hover:bg-gray-100"
-                title="Heading 2"
-              >
-                H2
-              </button>
-              <button 
-                type="button" 
-                onClick={() => applyFormatting('heading3')}
-                className="px-3 py-1 text-xs uppercase tracking-wider hover:bg-gray-100"
-                title="Heading 3"
-              >
-                H3
-              </button>
-              <div className="h-4 border-r border-gray-200"></div>
-              <button 
-                type="button" 
-                onClick={() => applyFormatting('list')}
-                className="px-3 py-1 text-xs uppercase tracking-wider hover:bg-gray-100"
-                title="Bullet List"
-              >
-                Bullets
-              </button>
-              <button 
-                type="button" 
-                onClick={() => applyFormatting('olist')}
-                className="px-3 py-1 text-xs uppercase tracking-wider hover:bg-gray-100"
-                title="Numbered List"
-              >
-                Numbers
-              </button>
-              <button 
-                type="button" 
-                onClick={() => applyFormatting('quote')}
-                className="px-3 py-1 text-xs uppercase tracking-wider hover:bg-gray-100"
-                title="Quote"
-              >
-                Quote
-              </button>
-              <div className="ml-auto">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Excerpt (short summary)</label>
+              <textarea
+                name="excerpt"
+                value={formData.excerpt}
+                onChange={handleChange}
+                className="w-full border border-gray-300 rounded-md px-3 py-2"
+                rows={3}
+                required
+                placeholder="A brief summary of the article (appears in previews)"
+              />
+            </div>
+            
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Content</label>
+              
+              {/* Text formatting toolbar */}
+              <div className="flex flex-wrap gap-2 mb-2 border border-gray-200 rounded-md p-2 bg-gray-50">
                 <button 
                   type="button" 
-                  onClick={handleAddInlineImageClick}
-                  className="px-3 py-1 text-xs uppercase tracking-wider border border-gray-300 hover:bg-gray-100"
-                  title="Insert Image"
+                  onClick={() => applyFormatting('bold')} 
+                  className="px-2 py-1 bg-white border rounded hover:bg-gray-100"
+                  title="Bold"
                 >
-                  + Insert Image
+                  <strong>B</strong>
                 </button>
+                <button 
+                  type="button" 
+                  onClick={() => applyFormatting('italic')} 
+                  className="px-2 py-1 bg-white border rounded hover:bg-gray-100"
+                  title="Italic"
+                >
+                  <em>I</em>
+                </button>
+                <button 
+                  type="button" 
+                  onClick={() => applyFormatting('underline')} 
+                  className="px-2 py-1 bg-white border rounded hover:bg-gray-100"
+                  title="Underline"
+                >
+                  <u>U</u>
+                </button>
+                <button 
+                  type="button" 
+                  onClick={() => applyFormatting('heading1')} 
+                  className="px-2 py-1 bg-white border rounded hover:bg-gray-100"
+                  title="Heading 1"
+                >
+                  H1
+                </button>
+                <button 
+                  type="button" 
+                  onClick={() => applyFormatting('heading2')} 
+                  className="px-2 py-1 bg-white border rounded hover:bg-gray-100"
+                  title="Heading 2"
+                >
+                  H2
+                </button>
+                <button 
+                  type="button" 
+                  onClick={() => applyFormatting('heading3')} 
+                  className="px-2 py-1 bg-white border rounded hover:bg-gray-100"
+                  title="Heading 3"
+                >
+                  H3
+                </button>
+                <button 
+                  type="button" 
+                  onClick={() => applyFormatting('quote')} 
+                  className="px-2 py-1 bg-white border rounded hover:bg-gray-100"
+                  title="Blockquote"
+                >
+                  Quote
+                </button>
+                <button 
+                  type="button" 
+                  onClick={() => applyFormatting('list')} 
+                  className="px-2 py-1 bg-white border rounded hover:bg-gray-100"
+                  title="Bullet List"
+                >
+                  • List
+                </button>
+                <button 
+                  type="button" 
+                  onClick={() => applyFormatting('olist')} 
+                  className="px-2 py-1 bg-white border rounded hover:bg-gray-100"
+                  title="Numbered List"
+                >
+                  1. List
+                </button>
+                <button 
+                  type="button" 
+                  onClick={handleAddInlineImageClick} 
+                  className="px-2 py-1 bg-white border border-black rounded hover:bg-gray-100"
+                  title="Add Image"
+                >
+                  + Image
+                </button>
+                <input 
+                  type="file"
+                  ref={inlineFileInputRef}
+                  onChange={handleInlineFileChange}
+                  accept="image/*"
+                  className="hidden"
+                />
               </div>
-            </div>
-            
-            <textarea
-              name="content"
-              ref={contentEditorRef}
-              value={formData.content}
-              onChange={handleChange}
-              onClick={handleContentClick}
-              onKeyUp={handleContentKeyUp}
-              className="w-full border border-gray-100 rounded-none p-4 font-light min-h-64 focus:ring-0 focus:border-gray-300"
-              rows={12}
-              required
-              placeholder="Write your article content here..."
-            />
-            
-            {/* Hidden file input for inline images */}
-            <input
-              type="file"
-              ref={inlineFileInputRef}
-              onChange={handleInlineFileChange}
-              accept="image/*"
-              className="hidden"
-            />
-            
-            {/* Inline images preview - Gallery style */}
-            {inlineImages.length > 0 && (
-              <div className="mt-6 border-t border-gray-100 pt-6">
-                <h3 className="text-xs uppercase tracking-wider mb-4 text-gray-500">Inline Images</h3>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
-                  {inlineImages.map((image) => (
-                    <div key={image.id} className="flex bg-gray-50 p-4">
-                      <div className="w-24 h-24 flex-shrink-0 mr-4 bg-gray-100">
-                        <img 
-                          src={image.previewUrl || image.url} 
-                          alt="Preview" 
-                          className="h-full w-full object-cover" 
-                        />
-                      </div>
-                      <div className="flex-grow">
-                        <input
-                          type="text"
-                          placeholder="Image caption"
-                          value={image.caption}
-                          onChange={(e) => handleInlineImageCaptionChange(image.id, e.target.value)}
-                          className="w-full bg-transparent border-0 border-b border-gray-200 mb-2 text-sm font-light focus:ring-0 focus:border-black"
-                        />
-                        <div className="flex justify-between items-center">
-                          <span className="text-xs text-gray-400">Position marker: {image.id}</span>
-                          <button 
-                            type="button"
-                            onClick={() => removeInlineImage(image.id)}
-                            className="text-xs uppercase tracking-wider text-gray-500 hover:text-black"
-                          >
-                            Remove
-                          </button>
-                        </div>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-          </div>
-          
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-            <div>
-              <label className="block text-xs uppercase tracking-wider text-gray-500 mb-2">Category</label>
-              <select
-                name="category"
-                value={formData.category}
+              
+              <textarea
+                name="content"
+                value={formData.content}
                 onChange={handleChange}
-                className="w-full border-0 border-b border-gray-200 px-0 py-2 font-light focus:ring-0 focus:border-black"
-              >
-                <option value="fashion">Fashion</option>
-                <option value="beauty">Beauty</option>
-                <option value="lifestyle">Lifestyle</option>
-                <option value="latest-news">Latest News</option>
-                <option value="shopping">Shopping</option>
-              </select>
-            </div>
-            
-            <div>
-              <label className="block text-xs uppercase tracking-wider text-gray-500 mb-2">Gender (if applicable)</label>
-              <select
-                name="gender"
-                value={formData.gender}
-                onChange={handleChange}
-                className="w-full border-0 border-b border-gray-200 px-0 py-2 font-light focus:ring-0 focus:border-black"
-              >
-                <option value="women">Women</option>
-                <option value="men">Men</option>
-                <option value="">Not applicable</option>
-              </select>
-            </div>
-          </div>
-          
-          <div>
-            <label className="block text-xs uppercase tracking-wider text-gray-500 mb-2">Featured Image</label>
-            <div className="bg-gray-50 p-6">
-              {/* Hidden file input */}
-              <input
-                type="file"
-                ref={fileInputRef}
-                onChange={handleFileChange}
-                accept="image/*"
-                className="hidden"
+                onClick={handleContentClick}
+                onKeyUp={handleContentKeyUp}
+                ref={contentEditorRef}
+                className="w-full border border-gray-300 rounded-md px-3 py-2"
+                rows={15}
+                required
+                placeholder="Write your article content here. You can use Markdown formatting."
               />
               
-              {/* Custom upload area */}
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-                <div>
-                  {(previewUrl || formData.image) ? (
-                    <div className="mb-4">
-                      <img 
-                        src={previewUrl || formData.image} 
-                        alt="Preview" 
-                        className="w-full h-64 object-cover" 
-                        onError={(e) => {
-                          (e.target as HTMLImageElement).src = '/placeholder-image.jpg';
-                        }}
-                      />
-                    </div>
-                  ) : (
-                    <div className="flex items-center justify-center h-64 bg-gray-100 text-gray-400 mb-4">
-                      No image selected
-                    </div>
-                  )}
-                  
-                  <button
-                    type="button"
-                    onClick={handleBrowseClick}
-                    className="w-full py-2 bg-black text-white text-xs uppercase tracking-widest hover:bg-gray-800"
-                  >
-                    {selectedFile ? 'Change Image' : 'Select Image'}
-                  </button>
+              {/* Preview inline images */}
+              {inlineImages.length > 0 && (
+                <div className="my-4 border-t border-gray-200 pt-4">
+                  <h3 className="text-lg font-medium mb-2">Inline Images</h3>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
+                    {inlineImages.map(img => (
+                      <div key={img.id} className="border rounded-md p-3">
+                        <img 
+                          src={img.previewUrl} 
+                          alt="Preview" 
+                          className="w-full h-40 object-cover mb-2"
+                        />
+                        <input
+                          type="text"
+                          value={img.caption}
+                          onChange={(e) => handleInlineImageCaptionChange(img.id, e.target.value)}
+                          className="w-full border border-gray-300 rounded-md px-2 py-1 mb-2"
+                          placeholder="Image caption"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => removeInlineImage(img.id)}
+                          className="text-red-600 text-sm hover:text-red-800"
+                        >
+                          Remove Image
+                        </button>
+                      </div>
+                    ))}
+                  </div>
                 </div>
+              )}
+            </div>
+            
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Category</label>
+                <select
+                  name="category"
+                  value={formData.category}
+                  onChange={handleChange}
+                  className="w-full border border-gray-300 rounded-md px-3 py-2"
+                  required
+                >
+                  <option value="fashion">Fashion</option>
+                  <option value="beauty">Beauty</option>
+                  <option value="lifestyle">Lifestyle</option>
+                  <option value="culture">Culture</option>
+                  <option value="wellness">Wellness</option>
+                  <option value="celebrity">Celebrity</option>
+                </select>
+              </div>
+              
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Gender Focus</label>
+                <select
+                  name="gender"
+                  value={formData.gender}
+                  onChange={handleChange}
+                  className="w-full border border-gray-300 rounded-md px-3 py-2"
+                  required
+                >
+                  <option value="women">Women</option>
+                  <option value="men">Men</option>
+                  <option value="unisex">Unisex</option>
+                </select>
+              </div>
+            </div>
+            
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Author</label>
+              <input
+                type="text"
+                name="author"
+                value={formData.author}
+                onChange={handleChange}
+                className="w-full border border-gray-300 rounded-md px-3 py-2"
+                required
+                placeholder="Author name"
+              />
+            </div>
+            
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Main Image</label>
+              <div className="border border-gray-300 rounded-md p-4 bg-gray-50">
+                {/* Image preview */}
+                {previewUrl && (
+                  <div className="mb-4">
+                    <img 
+                      src={previewUrl} 
+                      alt="Preview" 
+                      className="max-h-64 mx-auto"
+                    />
+                  </div>
+                )}
                 
-                <div>
-                  <p className="text-xs uppercase tracking-wider text-gray-500 mb-2">Or use image URL</p>
-                  <input
-                    type="text"
-                    name="image"
-                    value={formData.image}
-                    onChange={handleChange}
-                    placeholder="Enter image URL"
-                    className="w-full border-0 border-b border-gray-200 bg-transparent px-0 py-2 font-light focus:ring-0 focus:border-black"
-                  />
+                <div className="flex flex-col md:flex-row gap-4">
+                  <div className="flex-1">
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Upload Image</label>
+                    <div className="flex items-center">
+                      <button
+                        type="button"
+                        onClick={handleBrowseClick}
+                        className="bg-white border border-gray-300 rounded-md px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
+                      >
+                        Browse...
+                      </button>
+                      <input
+                        type="file"
+                        ref={fileInputRef}
+                        onChange={handleFileChange}
+                        accept="image/*"
+                        className="hidden"
+                      />
+                      <span className="ml-2 text-sm text-gray-500">
+                        {selectedFile ? selectedFile.name : 'No file selected'}
+                      </span>
+                    </div>
+                  </div>
+                  
+                  <div className="flex-1">
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Or use image URL</label>
+                    <input
+                      type="text"
+                      name="image"
+                      value={formData.image}
+                      onChange={handleChange}
+                      className="w-full border border-gray-300 rounded-md px-3 py-2"
+                      placeholder="https://example.com/image.jpg"
+                    />
+                  </div>
                 </div>
               </div>
             </div>
-          </div>
-          
-          <div>
-            <label className="block text-xs uppercase tracking-wider text-gray-500 mb-2">Author</label>
-            <input
-              type="text"
-              name="author"
-              value={formData.author}
-              onChange={handleChange}
-              className="w-full border-0 border-b border-gray-200 px-0 py-2 font-light focus:ring-0 focus:border-black"
-              required
-              placeholder="Enter author name"
-            />
-          </div>
-          
-          <div className="pt-6 border-t border-gray-100">
-            <button
-              type="submit"
-              disabled={isLoading}
-              className={`px-8 py-3 bg-black text-white text-xs uppercase tracking-widest hover:bg-gray-800 ${isLoading ? 'opacity-50 cursor-not-allowed' : ''}`}
-            >
-              {isLoading ? 'Publishing...' : 'Publish Article'}
-            </button>
-          </div>
-        </form>
-      )}
-      
-      {/* Manage Blogs Panel */}
-      {activeTab === 'manage' && (
-        <div>
-          {isLoadingBlogs ? (
-            <div className="text-center py-12">
-              <div className="w-16 h-16 border-4 border-t-black border-r-gray-200 border-b-gray-200 border-l-gray-200 rounded-full animate-spin mx-auto mb-4"></div>
-              <p className="text-gray-500 font-light">Loading articles...</p>
-            </div>
-          ) : blogs.length === 0 ? (
-            <div className="text-center py-12">
-              <p className="text-gray-500 font-light">No articles found.</p>
+            
+            <div className="pt-4">
               <button
-                onClick={() => setActiveTab('upload')}
-                className="mt-4 px-6 py-2 bg-black text-white text-xs uppercase tracking-widest hover:bg-gray-800"
+                type="submit"
+                disabled={isLoading}
+                className={`w-full bg-black text-white py-3 rounded-md hover:bg-gray-800 uppercase tracking-wider ${
+                  isLoading ? 'opacity-50 cursor-not-allowed' : ''
+                }`}
               >
-                Create Your First Article
+                {isLoading ? 'Publishing...' : 'Publish Article'}
               </button>
             </div>
-          ) : (
-            <div className="space-y-8">
-              {blogs.map((blog) => (
-                <div key={blog.id} className="border-b border-gray-100 pb-8">
-                  <div className="flex flex-col md:flex-row">
-                    <div className="w-full md:w-1/4 pr-0 md:pr-6 mb-4 md:mb-0">
+          </form>
+        </div>
+      )}
+      
+     {/* Manage Blogs */}
+{activeTab === 'manage' && (
+  <div>
+    <div className="flex justify-between items-center mb-4">
+      <h2 className="text-xl font-medium border-l-4 border-black pl-4">Manage Blog Posts</h2>
+      <button 
+        onClick={fetchBlogs}
+        className="text-sm bg-gray-100 px-3 py-1 rounded hover:bg-gray-200"
+        disabled={isLoadingBlogs}
+      >
+        {isLoadingBlogs ? 'Refreshing...' : 'Refresh'}
+      </button>
+    </div>
+    
+    {isLoadingBlogs ? (
+      <div className="text-center py-8">
+        <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-black mx-auto"></div>
+        <p className="mt-4 text-gray-600">Loading blogs...</p>
+      </div>
+    ) : blogs.length === 0 ? (
+      <div className="text-center py-8 text-gray-500 border border-gray-200 rounded-md">
+        No blog posts found
+      </div>
+    ) : (
+      <div className="overflow-x-auto">
+        <table className="min-w-full divide-y divide-gray-200">
+          <thead className="bg-gray-50">
+            <tr>
+              <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                Title
+              </th>
+              <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                Category
+              </th>
+              <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                Author
+              </th>
+              <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                Date
+              </th>
+              <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                Metrics
+              </th>
+              <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                Actions
+              </th>
+            </tr>
+          </thead>
+          <tbody className="bg-white divide-y divide-gray-200">
+            {blogs.map((blog) => (
+              <tr key={blog.id} className="hover:bg-gray-50">
+                <td className="px-6 py-4 whitespace-nowrap">
+                  <div className="flex items-center">
+                    <div className="h-10 w-10 flex-shrink-0">
                       <img 
+                        className="h-10 w-10 rounded object-cover" 
                         src={blog.image} 
-                        alt={blog.title} 
-                        className="w-full h-48 object-cover"
+                        alt={blog.title}
                         onError={(e) => {
-                          (e.target as HTMLImageElement).src = '/placeholder-image.jpg';
+                          const target = e.target as HTMLImageElement;
+                          target.src = '/placeholder-image.jpg';
                         }}
                       />
                     </div>
-                    <div className="w-full md:w-3/4">
+                    <div className="ml-4">
+                      <div className="text-sm font-medium text-gray-900">{blog.title}</div>
+                      <div className="text-xs text-gray-500 line-clamp-1">{blog.excerpt}</div>
+                    </div>
+                  </div>
+                </td>
+                <td className="px-6 py-4 whitespace-nowrap">
+                  <span className="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-gray-100 text-gray-800">
+                    {blog.category} {blog.gender ? `• ${blog.gender}` : ''}
+                  </span>
+                </td>
+                <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                  {blog.author}
+                </td>
+                <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                  {formatDate(blog.date)}
+                </td>
+                <td className="px-6 py-4 whitespace-nowrap">
+                  <div className="flex space-x-3 text-xs text-gray-500">
+                    <span>{blog.views} Views</span>
+                    <span>{blog.likes} Likes</span>
+                    <span>{blog.comments} Comments</span>
+                  </div>
+                </td>
+                <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
+                  <div className="flex space-x-2">
+                    <button
+                      onClick={() => navigate(`/blogs/${blog.id}`)}
+                      className="text-indigo-600 hover:text-indigo-900"
+                    >
+                      View
+                    </button>
+                    <button
+                      onClick={() => navigate(`/admin/edit/${blog.id}`)}
+                      className="text-blue-600 hover:text-blue-900"
+                    >
+                      Edit
+                    </button>
+                    <button
+                      onClick={() => handleDeleteBlog(blog.id)}
+                      disabled={deleteInProgress === blog.id}
+                      className="text-red-600 hover:text-red-900 disabled:text-gray-400"
+                    >
+                      {deleteInProgress === blog.id ? 'Deleting...' : 'Delete'}
+                    </button>
+                  </div>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    )}
+  </div>
+)}
+      
+      {/* User Submissions */}
+      {activeTab === 'submissions' && (
+        <div>
+          <div className="flex justify-between items-center mb-6">
+            <h2 className="text-2xl font-serif border-l-4 border-black pl-4">Review User Submissions</h2>
+            <button
+              onClick={fetchSubmissions}
+              className="text-sm px-4 py-2 border border-black rounded-md hover:bg-black hover:text-white"
+            >
+              Refresh List
+            </button>
+          </div>
+          
+          {isLoadingSubmissions ? (
+            <div className="text-center py-10">
+              <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-black mx-auto"></div>
+              <p className="mt-4 text-gray-600">Loading submissions...</p>
+            </div>
+          ) : submissions.length === 0 ? (
+            <div className="text-center py-10 border border-gray-200 rounded-md">
+              <p className="text-gray-600">No pending submissions found.</p>
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 gap-6">
+              {submissions.map(submission => (
+                <div key={submission.id} className="border border-gray-200 rounded-md overflow-hidden">
+                  <div className="flex flex-col md:flex-row">
+                    <div className="w-full md:w-1/4">
+                      <img 
+                        src={submission.image} 
+                        alt={submission.title}
+                        className="w-full h-48 object-cover"
+                        onError={(e) => {
+                          const target = e.target as HTMLImageElement;
+                          target.src = 'https://via.placeholder.com/400x300?text=Image+Not+Found';
+                        }}
+                      />
+                    </div>
+                    <div className="p-4 w-full md:w-3/4">
                       <div className="flex justify-between items-start">
                         <div>
-                          <h3 className="text-xl font-serif">{blog.title}</h3>
-                          <div className="flex items-center text-xs text-gray-500 mt-1 space-x-4">
-                            <span>{formatDate(blog.date)}</span>
-                            <span>By {blog.author}</span>
-                            <span className="capitalize">{blog.category}</span>
-                          </div>
+                          <h3 className="text-xl font-serif mb-2">{submission.title}</h3>
+                          <p className="text-sm text-gray-600 mb-2">
+                            <span className="uppercase">{submission.category}</span> • {formatDate(submission.date)} • 
+                            By {submission.author} • 
+                            <span className="text-orange-600 font-semibold ml-1">Submitted by: {submission.submittedBy || 'Anonymous'}</span>
+                          </p>
                         </div>
                         <div className="flex space-x-2">
                           <button
-                            onClick={() => navigate(`/edit-blog/${blog.id}`)}
-                            className="px-3 py-1 text-xs uppercase tracking-wider hover:bg-gray-100 border border-gray-200"
+                            onClick={() => handleSubmissionAction(submission.id, 'approve')}
+                            disabled={submissionAction?.id === submission.id}
+                            className={`bg-green-100 text-green-800 px-3 py-1 rounded-md text-sm hover:bg-green-200 ${
+                              submissionAction?.id === submission.id ? 'opacity-50 cursor-not-allowed' : ''
+                            }`}
                           >
-                            Edit
+                            {submissionAction?.id === submission.id && submissionAction?.action === 'approve' ? 'Approving...' : 'Approve'}
                           </button>
                           <button
-                            onClick={() => handleDeleteBlog(blog.id)}
-                            disabled={deleteInProgress === blog.id}
-                            className={`px-3 py-1 text-xs uppercase tracking-wider hover:bg-gray-100 border border-gray-200 ${deleteInProgress === blog.id ? 'opacity-50 cursor-not-allowed' : ''}`}
+                            onClick={() => handleSubmissionAction(submission.id, 'reject')}
+                            disabled={submissionAction?.id === submission.id}
+                            className={`bg-red-100 text-red-800 px-3 py-1 rounded-md text-sm hover:bg-red-200 ${
+                              submissionAction?.id === submission.id ? 'opacity-50 cursor-not-allowed' : ''
+                            }`}
                           >
-                            {deleteInProgress === blog.id ? 'Deleting...' : 'Delete'}
+                            {submissionAction?.id === submission.id && submissionAction?.action === 'reject' ? 'Rejecting...' : 'Reject'}
+                          </button>
+                          <button
+                            onClick={() => handleSubmissionAction(submission.id, 'delete')}
+                            disabled={submissionAction?.id === submission.id}
+                            className={`bg-gray-100 text-gray-800 px-3 py-1 rounded-md text-sm hover:bg-gray-200 ${
+                              submissionAction?.id === submission.id ? 'opacity-50 cursor-not-allowed' : ''
+                            }`}
+                          >
+                            {submissionAction?.id === submission.id && submissionAction?.action === 'delete' ? 'Deleting...' : 'Delete'}
                           </button>
                         </div>
                       </div>
-                      <p className="mt-3 text-gray-600 font-light">{blog.excerpt}</p>
-                      <div className="mt-4 flex items-center space-x-6 text-xs text-gray-500">
-                        <div className="flex items-center">
-                          <span className="mr-1">👁️</span>
-                          <span>{blog.views || 0} views</span>
-                        </div>
-                        <div className="flex items-center">
-                          <span className="mr-1">❤️</span>
-                          <span>{blog.likes || 0} likes</span>
-                        </div>
-                        <div className="flex items-center">
-                          <span className="mr-1">💬</span>
-                          <span>{blog.comments || 0} comments</span>
-                        </div>
+                      <p className="text-gray-700 my-2 line-clamp-2">{submission.excerpt}</p>
+                      <div className="mt-4">
+                        <button
+                          onClick={() => navigate(`/preview/${submission.id}`)}
+                          className="text-sm underline text-gray-600 hover:text-black"
+                        >
+                          Preview Full Article
+                        </button>
                       </div>
                     </div>
                   </div>
@@ -1001,10 +1320,149 @@ function AdminPage() {
         </div>
       )}
       
-      {/* Footer */}
-      <div className="mt-16 border-t border-gray-100 pt-8 pb-4 text-center">
-        <p className="text-xs text-gray-400 uppercase tracking-wider">Editorial Management System</p>
-      </div>
+      {/* Analytics Dashboard */}
+      {activeTab === 'analytics' && (
+        <div>
+          <div className="flex justify-between items-center mb-6">
+            <h2 className="text-2xl font-serif border-l-4 border-black pl-4">Analytics Dashboard</h2>
+            <div className="flex space-x-2">
+              <select
+                value={analyticsTimeframe}
+                onChange={(e) => setAnalyticsTimeframe(e.target.value as 'week' | 'month' | 'year')}
+                className="border border-gray-300 rounded-md px-3 py-2 text-sm"
+              >
+                <option value="week">Last 7 Days</option>
+                <option value="month">Last 30 Days</option>
+                <option value="year">Last 12 Months</option>
+              </select>
+              <button
+                onClick={fetchAnalytics}
+                className="text-sm px-4 py-2 border border-black rounded-md hover:bg-black hover:text-white"
+              >
+                Refresh Data
+              </button>
+            </div>
+          </div>
+          
+          {isLoadingAnalytics ? (
+            <div className="text-center py-10">
+              <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-black mx-auto"></div>
+              <p className="mt-4 text-gray-600">Loading analytics data...</p>
+            </div>
+          ) : analyticsData ? (
+            <div className="space-y-8">
+              {/* Key metrics */}
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                <div className="bg-white p-6 rounded-md shadow-sm border border-gray-200">
+                  <h3 className="text-sm uppercase text-gray-500 mb-1">Total Views</h3>
+                  <p className="text-3xl font-serif">{formatNumber(analyticsData.totalViews)}</p>
+                </div>
+                <div className="bg-white p-6 rounded-md shadow-sm border border-gray-200">
+                  <h3 className="text-sm uppercase text-gray-500 mb-1">Total Likes</h3>
+                  <p className="text-3xl font-serif">{formatNumber(analyticsData.totalLikes)}</p>
+                </div>
+                <div className="bg-white p-6 rounded-md shadow-sm border border-gray-200">
+                  <h3 className="text-sm uppercase text-gray-500 mb-1">Total Comments</h3>
+                  <p className="text-3xl font-serif">{formatNumber(analyticsData.totalComments)}</p>
+                </div>
+              </div>
+              
+              {/* Top performing content */}
+              <div className="bg-white p-6 rounded-md shadow-sm border border-gray-200">
+                <h3 className="text-lg font-medium mb-4">Top Performing Content</h3>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                  {analyticsData.mostViewedArticle && (
+                    <div className="border border-gray-100 rounded-md p-4">
+                      <h4 className="text-sm uppercase text-gray-500 mb-1">Most Viewed Article</h4>
+                      <p className="font-serif text-lg mb-1">{analyticsData.mostViewedArticle.title}</p>
+                      <div className="flex justify-between text-sm">
+                        <span>{formatNumber(analyticsData.mostViewedArticle.views || 0)} views</span>
+                        <span>{formatDate(analyticsData.mostViewedArticle.date)}</span>
+                      </div>
+                    </div>
+                  )}
+                  
+                  {analyticsData.mostLikedArticle && (
+                    <div className="border border-gray-100 rounded-md p-4">
+                      <h4 className="text-sm uppercase text-gray-500 mb-1">Most Liked Article</h4>
+                      <p className="font-serif text-lg mb-1">{analyticsData.mostLikedArticle.title}</p>
+                      <div className="flex justify-between text-sm">
+                        <span>{formatNumber(analyticsData.mostLikedArticle.likes || 0)} likes</span>
+                        <span>{formatDate(analyticsData.mostLikedArticle.date)}</span>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+              
+              {/* Category distribution */}
+              <div className="bg-white p-6 rounded-md shadow-sm border border-gray-200">
+                <h3 className="text-lg font-medium mb-4">Category Distribution</h3>
+                {analyticsData.categoryBreakdown.length > 0 ? (
+                  <div className="space-y-2">
+                    {analyticsData.categoryBreakdown.map(item => (
+                      <div key={item.category} className="flex items-center">
+                        <div className="w-24 font-medium capitalize">{item.category}</div>
+                        <div className="flex-1 mx-4">
+                          <div className="h-2 bg-gray-200 rounded-full overflow-hidden">
+                            <div 
+                              className="h-full bg-black" 
+                              style={{ 
+                                width: `${(item.count / analyticsData.categoryBreakdown.reduce((sum, cat) => sum + cat.count, 0)) * 100}%` 
+                              }}
+                            ></div>
+                          </div>
+                        </div>
+                        <div className="w-10 text-right">{item.count}</div>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="text-gray-600">No category data available.</p>
+                )}
+              </div>
+              
+              {/* Recent traffic trend */}
+              <div className="bg-white p-6 rounded-md shadow-sm border border-gray-200">
+                <h3 className="text-lg font-medium mb-4">Traffic Trend</h3>
+                {analyticsData.recentTrend.length > 0 ? (
+                  <div className="h-64">
+                    <div className="flex h-full items-end space-x-1">
+                      {analyticsData.recentTrend.map((day) => {
+                        const maxViews = Math.max(...analyticsData.recentTrend.map(d => d.views));
+                        const height = maxViews > 0 ? (day.views / maxViews) * 100 : 0;
+                        
+                        return (
+                          <div 
+                            key={day.date}
+                            className="flex-1 flex flex-col items-center group"
+                          >
+                            <div className="w-full">
+                              <div 
+                                className="w-full bg-black hover:bg-gray-700 transition-all" 
+                                style={{ height: `${height}%` }}
+                              ></div>
+                            </div>
+                            <div className="text-xs mt-1 text-gray-600 truncate w-full text-center">
+                              {new Date(day.date).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                ) : (
+                  <p className="text-gray-600">No trend data available.</p>
+                )}
+              </div>
+            </div>
+          ) : (
+            <div className="text-center py-10 border border-gray-200 rounded-md">
+              <p className="text-gray-600">No analytics data available.</p>
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }

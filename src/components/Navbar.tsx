@@ -71,7 +71,7 @@ export default function Navbar() {
     <>
       <nav className="bg-white fixed top-0 left-0 w-full border-b border-gray-200 z-40">
         {/* Top Navbar */}
-        <div className="flex justify-between items-center max-w-7xl mx-auto px-6 py-4">
+        <div className="flex justify-between items-center max-w-7xl mx-auto px-6 py-4 relative">
           {/* Left: Menu Button - visible on all devices */}
           <button 
             className="block p-2 text-gray-800 z-50" 
@@ -81,10 +81,12 @@ export default function Navbar() {
             {isOpen ? <X size={28} /> : <Menu size={28} />}
           </button>
 
-          {/* Center: Logo */}
-          <Link to="/" className="text-4xl md:text-5xl font-bold tracking-widest uppercase font-playfair pl-8">
-            Avoure
-          </Link>
+          {/* Center: Logo - CENTERED */}
+          <div className="absolute left-1/2 transform -translate-x-1/2">
+            <Link to="/" className="text-4xl md:text-5xl font-bold tracking-widest uppercase font-playfair">
+              Avoure
+            </Link>
+          </div>
 
           {/* Right: Subscription, Login/Profile */}
           <div className="hidden md:flex items-center space-x-6 text-sm uppercase tracking-wider">
