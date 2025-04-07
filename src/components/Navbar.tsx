@@ -1,11 +1,24 @@
 import { useState, useEffect } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { Link, useNavigate, useLocation } from "react-router-dom";
 import { Menu, X, User, LogOut, BookOpen, ChevronDown } from "lucide-react";
 
 export default function Navbar() {
   const [isOpen, setIsOpen] = useState(false);
   const [profileDropdownOpen, setProfileDropdownOpen] = useState(false);
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
   const navigate = useNavigate();
+  const location = useLocation();
+  
+  // Check authentication status on component mount and when location changes
+  useEffect(() => {
+    checkAuthStatus();
+  }, [location.pathname]);
+  
+  // Function to check authentication status
+  const checkAuthStatus = () => {
+    const authToken = localStorage.getItem('authToken');
+    setIsAuthenticated(!!authToken);
+  };
   
   // Prevent scrolling when menu is open
   useEffect(() => {
@@ -35,20 +48,23 @@ export default function Navbar() {
   }, [profileDropdownOpen]);
 
   // Sign out function
-  const handleSignOut = () => {
-    // Implement your authentication logic here
-    // For example:
-    // 1. Clear local storage/session storage
+  const handleSignOut = (e: React.MouseEvent) => {
+    e.preventDefault(); // Prevent default behavior
+    
+    // Clear authentication data
     localStorage.removeItem('authToken');
     localStorage.removeItem('userData');
+    sessionStorage.removeItem('authToken'); // Also clear from sessionStorage if used
     
-    // 2. Clear any auth context if you're using React Context
+    // Update authentication state
+    setIsAuthenticated(false);
     
-    // 3. Redirect to home or login page
-    navigate('/');
-    
-    // 4. Close the dropdown
+    // Close any open menus
     setProfileDropdownOpen(false);
+    setIsOpen(false);
+    
+    // Redirect to home
+    navigate('/', { replace: true });
   };
 
   return (
@@ -70,42 +86,47 @@ export default function Navbar() {
             Avoure
           </Link>
 
-          {/* Right: Subscription, Profile Dropdown */}
+          {/* Right: Subscription, Login/Profile */}
           <div className="hidden md:flex items-center space-x-6 text-sm uppercase tracking-wider">
             <Link to="/subscribe" className="hover:opacity-70">Subscription</Link>
             <div className="border-l border-gray-300 h-5"></div>
             
-            {/* Profile Button with Dropdown */}
-            <div className="profile-dropdown relative">
-              <button 
-                className="flex items-center space-x-1 hover:opacity-70"
-                onClick={() => setProfileDropdownOpen(!profileDropdownOpen)}
-              >
+            {isAuthenticated ? (
+              // Show Profile dropdown when authenticated
+              <div className="profile-dropdown relative">
+                <button 
+                  className="flex items-center space-x-1 hover:opacity-70"
+                  onClick={() => setProfileDropdownOpen(!profileDropdownOpen)}
+                >
+                  <User size={18} />
+                  <span>Profile</span>
+                  <ChevronDown size={14} className={`transition-transform duration-200 ${profileDropdownOpen ? 'rotate-180' : ''}`} />
+                </button>
+                
+                {/* Profile Dropdown Menu */}
+                {profileDropdownOpen && (
+                  <div className="absolute right-0 mt-2 w-48 bg-white border border-gray-200 shadow-lg rounded-md py-1 z-50">
+                    <Link to="/your-blog" className="flex items-center px-4 py-2 text-sm text-gray-800 hover:bg-gray-100 uppercase tracking-wide">
+                      <BookOpen size={14} className="mr-2" />
+                      View Your Blog
+                    </Link>
+                    <button 
+                      onClick={handleSignOut}
+                      className="flex items-center w-full text-left px-4 py-2 text-sm text-gray-800 hover:bg-gray-100 uppercase tracking-wide"
+                    >
+                      <LogOut size={14} className="mr-2" />
+                      Sign Out
+                    </button>
+                  </div>
+                )}
+              </div>
+            ) : (
+              // Show Sign In option when not authenticated
+              <Link to="/signin" className="flex items-center space-x-1 hover:opacity-70">
                 <User size={18} />
-                <span>Profile</span>
-                <ChevronDown size={14} className={`transition-transform duration-200 ${profileDropdownOpen ? 'rotate-180' : ''}`} />
-              </button>
-              
-              {/* Profile Dropdown Menu */}
-              {profileDropdownOpen && (
-                <div className="absolute right-0 mt-2 w-48 bg-white border border-gray-200 shadow-lg rounded-md py-1 z-50">
-                  <Link to="/signin" className="block px-4 py-2 text-sm text-gray-800 hover:bg-gray-100 uppercase tracking-wide">
-                    Sign In
-                  </Link>
-                  <Link to="/your-blog" className="flex items-center px-4 py-2 text-sm text-gray-800 hover:bg-gray-100 uppercase tracking-wide">
-                    <BookOpen size={14} className="mr-2" />
-                    View Your Blog
-                  </Link>
-                  <button 
-                    onClick={handleSignOut}
-                    className="flex items-center w-full text-left px-4 py-2 text-sm text-gray-800 hover:bg-gray-100 uppercase tracking-wide"
-                  >
-                    <LogOut size={14} className="mr-2" />
-                    Sign Out
-                  </button>
-                </div>
-              )}
-            </div>
+                <span>Signin</span>
+              </Link>
+            )}
           </div>
         </div>
 
@@ -147,24 +168,32 @@ export default function Navbar() {
           
           <div className="space-y-4 mt-6">
             <Link to="/subscribe" onClick={() => setIsOpen(false)} className="block py-3 hover:opacity-70 uppercase tracking-widest text-sm">Subscription</Link>
-            <Link to="/signin" onClick={() => setIsOpen(false)} className="flex items-center py-3 hover:opacity-70 uppercase tracking-widest text-sm">
-              <User size={18} />
-              <span className="ml-2">Signin</span>
-            </Link>
-            <Link to="/your-blog" onClick={() => setIsOpen(false)} className="flex items-center py-3 hover:opacity-70 uppercase tracking-widest text-sm">
-              <BookOpen size={18} />
-              <span className="ml-2">View Your Blog</span>
-            </Link>
-            <button 
-              onClick={() => {
-                handleSignOut();
-                setIsOpen(false);
-              }} 
-              className="flex items-center py-3 hover:opacity-70 uppercase tracking-widest text-sm w-full text-left"
-            >
-              <LogOut size={18} />
-              <span className="ml-2">Sign Out</span>
-            </button>
+            
+            {isAuthenticated ? (
+              // Show authenticated options in side menu
+              <>
+                <Link to="/your-blog" onClick={() => setIsOpen(false)} className="flex items-center py-3 hover:opacity-70 uppercase tracking-widest text-sm">
+                  <BookOpen size={18} />
+                  <span className="ml-2">View Your Blog</span>
+                </Link>
+                <button 
+                  onClick={(e) => {
+                    handleSignOut(e);
+                    setIsOpen(false);
+                  }} 
+                  className="flex items-center py-3 hover:opacity-70 uppercase tracking-widest text-sm w-full text-left"
+                >
+                  <LogOut size={18} />
+                  <span className="ml-2">Sign Out</span>
+                </button>
+              </>
+            ) : (
+              // Show Sign In option when not authenticated
+              <Link to="/signin" onClick={() => setIsOpen(false)} className="flex items-center py-3 hover:opacity-70 uppercase tracking-widest text-sm">
+                <User size={18} />
+                <span className="ml-2">Signin</span>
+              </Link>
+            )}
           </div>
         </div>
       </div>

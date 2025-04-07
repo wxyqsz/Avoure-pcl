@@ -1,7 +1,7 @@
+
 import { useState, useRef, useEffect } from 'react';
 import { supabase } from '../lib/supabase';
 import { useNavigate } from 'react-router-dom';
-import { FaBold, FaItalic, FaUnderline, FaList, FaListOl, FaQuoteRight, FaImage } from 'react-icons/fa';
 
 // Define the Article type for TypeScript
 interface Article {
@@ -48,7 +48,7 @@ function AdminPage() {
     image: '',
     author: ''
   });
-  const [message, setMessage] = useState<{ text: string, type: string }>({ text: '', type: '' });
+  const [message, setMessage] = useState({ text: '', type: '' });
   
   // State for managing inline images
   const [inlineImages, setInlineImages] = useState<InlineImage[]>([]);
@@ -516,6 +516,8 @@ function AdminPage() {
     };
   }, [previewUrl, inlineImages]);
 
+  
+
   // Format date helper
   const formatDate = (dateString: string) => {
     try {
@@ -531,7 +533,7 @@ function AdminPage() {
   };
 
   return (
-    <div className="max-w-6xl mx-auto p-6 mt-36">
+    <div className="max-w-6xl mx-auto p-6 mt-32">
       <h1 className="text-3xl font-serif mb-6">Admin Dashboard</h1>
       
       {/* Tabs */}
@@ -572,127 +574,119 @@ function AdminPage() {
       {activeTab === 'upload' && (
         <form onSubmit={handleSubmit} className="space-y-6">
           <div>
-            <label className="block uppercase tracking-wide text-xs font-medium text-gray-500 mb-3">Title</label>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Title</label>
             <input
               type="text"
               name="title"
               value={formData.title}
               onChange={handleChange}
-              className="w-full border-0 border-b-2 border-gray-200 focus:ring-0 focus:border-black py-3 text-2xl font-serif"
-              placeholder="Article Title"
+              className="w-full border border-gray-300 rounded-md px-3 py-2"
               required
             />
           </div>
           
-          {/* Excerpt Section */}
           <div>
-            <label className="block uppercase tracking-wide text-xs font-medium text-gray-500 mb-3">Excerpt (short summary)</label>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Excerpt (short summary)</label>
             <textarea
               name="excerpt"
               value={formData.excerpt}
               onChange={handleChange}
+              className="w-full border border-gray-300 rounded-md px-3 py-2"
               rows={3}
-              className="w-full border-2 border-gray-200 focus:ring-0 focus:border-black p-3"
-              placeholder="A brief introduction to entice your readers (will appear in previews)"
               required
             />
           </div>
-            
-          {/* Content Section with Rich Text Controls */}
+          
           <div>
-            <label className="block uppercase tracking-wide text-xs font-medium text-gray-500 mb-3">Content</label>
-              
+            <label className="block text-sm font-medium text-gray-700 mb-1">Content</label>
+            
             {/* Text formatting toolbar */}
-            <div className="flex flex-wrap border-2 border-b-0 border-gray-200 p-2 space-x-1 bg-gray-50">
+            <div className="flex flex-wrap gap-2 mb-2 p-2 bg-gray-50 border border-gray-300 rounded-md">
               <button 
                 type="button" 
                 onClick={() => applyFormatting('bold')}
-                className="p-2 rounded hover:bg-gray-200"
+                className="px-2 py-1 bg-white border border-gray-300 rounded hover:bg-gray-100 text-sm font-bold"
                 title="Bold"
               >
-                <FaBold size={16} />
+                B
               </button>
               <button 
                 type="button" 
                 onClick={() => applyFormatting('italic')}
-                className="p-2 rounded hover:bg-gray-200"
+                className="px-2 py-1 bg-white border border-gray-300 rounded hover:bg-gray-100 text-sm italic"
                 title="Italic"
               >
-                <FaItalic size={16} />
+                I
               </button>
               <button 
                 type="button" 
                 onClick={() => applyFormatting('underline')}
-                className="p-2 rounded hover:bg-gray-200"
+                className="px-2 py-1 bg-white border border-gray-300 rounded hover:bg-gray-100 text-sm underline"
                 title="Underline"
               >
-                <FaUnderline size={16} />
+                U
               </button>
-              <div className="border-l border-gray-300 mx-1"></div>
+              <div className="h-6 border-r border-gray-300 mx-1"></div>
               <button 
                 type="button" 
                 onClick={() => applyFormatting('heading1')}
-                className="p-2 rounded hover:bg-gray-200 flex items-center"
+                className="px-2 py-1 bg-white border border-gray-300 rounded hover:bg-gray-100 text-sm font-bold"
                 title="Heading 1"
               >
-                <FaBold size={16} className="mr-1" />
-                <span className="text-xs">H1</span>
+                H1
               </button>
               <button 
                 type="button" 
                 onClick={() => applyFormatting('heading2')}
-                className="p-2 rounded hover:bg-gray-200 flex items-center"
+                className="px-2 py-1 bg-white border border-gray-300 rounded hover:bg-gray-100 text-sm font-bold"
                 title="Heading 2"
               >
-                <FaBold size={16} className="mr-1" />
-                <span className="text-xs">H2</span>
+                H2
               </button>
               <button 
                 type="button" 
                 onClick={() => applyFormatting('heading3')}
-                className="p-2 rounded hover:bg-gray-200 flex items-center"
+                className="px-2 py-1 bg-white border border-gray-300 rounded hover:bg-gray-100 text-sm font-bold"
                 title="Heading 3"
               >
-                <FaBold size={16} className="mr-1" />
-                <span className="text-xs">H3</span>
+                H3
               </button>
-              <div className="border-l border-gray-300 mx-1"></div>
+              <div className="h-6 border-r border-gray-300 mx-1"></div>
               <button 
                 type="button" 
                 onClick={() => applyFormatting('list')}
-                className="p-2 rounded hover:bg-gray-200"
+                className="px-2 py-1 bg-white border border-gray-300 rounded hover:bg-gray-100 text-sm"
                 title="Bullet List"
               >
-                <FaList size={16} />
+                • List
               </button>
               <button 
                 type="button" 
                 onClick={() => applyFormatting('olist')}
-                className="p-2 rounded hover:bg-gray-200"
+                className="px-2 py-1 bg-white border border-gray-300 rounded hover:bg-gray-100 text-sm"
                 title="Numbered List"
               >
-                <FaListOl size={16} />
+                1. List
               </button>
               <button 
                 type="button" 
                 onClick={() => applyFormatting('quote')}
-                className="p-2 rounded hover:bg-gray-200"
+                className="px-2 py-1 bg-white border border-gray-300 rounded hover:bg-gray-100 text-sm"
                 title="Quote"
               >
-                <FaQuoteRight size={16} />
+                " Quote
               </button>
-              <div className="border-l border-gray-300 mx-1"></div>
+              <div className="h-6 border-r border-gray-300 mx-1"></div>
               <button 
                 type="button" 
                 onClick={handleAddInlineImageClick}
-                className="p-2 rounded hover:bg-gray-200 flex items-center"
+                className="px-2 py-1 bg-white border border-gray-300 rounded hover:bg-gray-100 text-sm"
                 title="Insert Image"
               >
-                <FaImage size={16} className="mr-1" />
-                <span className="text-xs">Image</span>
+                + Image
               </button>
             </div>
-              
+            
             <textarea
               name="content"
               ref={contentEditorRef}
@@ -700,7 +694,7 @@ function AdminPage() {
               onChange={handleChange}
               onClick={handleContentClick}
               onKeyUp={handleContentKeyUp}
-              className="w-full border-2 border-gray-200 focus:ring-0 focus:border-black p-3"
+              className="w-full border border-gray-300 rounded-md px-3 py-2"
               rows={10}
               required
             />
@@ -756,14 +750,14 @@ function AdminPage() {
             )}
           </div>
           
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+          <div className="grid grid-cols-2 gap-4">
             <div>
-              <label className="block uppercase tracking-wide text-xs font-medium text-gray-500 mb-3">Category</label>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Category</label>
               <select
                 name="category"
                 value={formData.category}
                 onChange={handleChange}
-                className="w-full border-2 border-gray-200 focus:ring-0 focus:border-black py-3"
+                className="w-full border border-gray-300 rounded-md px-3 py-2"
               >
                 <option value="fashion">Fashion</option>
                 <option value="beauty">Beauty</option>
@@ -774,12 +768,12 @@ function AdminPage() {
             </div>
             
             <div>
-              <label className="block uppercase tracking-wide text-xs font-medium text-gray-500 mb-3">Gender (if applicable)</label>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Gender (if applicable)</label>
               <select
                 name="gender"
                 value={formData.gender}
                 onChange={handleChange}
-                className="w-full border-2 border-gray-200 focus:ring-0 focus:border-black py-3"
+                className="w-full border border-gray-300 rounded-md px-3 py-2"
               >
                 <option value="women">Women</option>
                 <option value="men">Men</option>
@@ -789,7 +783,7 @@ function AdminPage() {
           </div>
           
           <div>
-            <label className="block uppercase tracking-wide text-xs font-medium text-gray-500 mb-3">Featured Image</label>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Featured Image</label>
             <div className="space-y-3">
               {/* Hidden file input */}
               <input
@@ -817,7 +811,7 @@ function AdminPage() {
                     value={formData.image}
                     onChange={handleChange}
                     placeholder="Or paste image URL here"
-                    className="w-full border-2 border-gray-200 focus:ring-0 focus:border-black p-3"
+                    className="w-full border border-gray-300 rounded-md px-3 py-2"
                   />
                   {selectedFile && (
                     <p className="text-sm text-gray-500 mt-1">
@@ -826,6 +820,7 @@ function AdminPage() {
                   )}
                 </div>
               </div>
+              
               {/* Image preview */}
               {(previewUrl || formData.image) && (
                 <div className="mt-2">
@@ -844,29 +839,24 @@ function AdminPage() {
             </div>
           </div>
           
-          {/* Author Field */}
           <div>
-            <label className="block uppercase tracking-wide text-xs font-medium text-gray-500 mb-3">
-              Author
-            </label>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Author</label>
             <input
               type="text"
               name="author"
               value={formData.author}
               onChange={handleChange}
-              className="w-full border-2 border-gray-200 focus:ring-0 focus:border-black py-3 px-4"
-              placeholder="Enter author name"
+              className="w-full border border-gray-300 rounded-md px-3 py-2"
               required
             />
           </div>
-            
-          {/* Submit Button */}
+          
           <button
             type="submit"
             disabled={isLoading}
-            className="w-full bg-black text-white py-4 px-6 uppercase tracking-widest text-sm hover:bg-gray-800 transition-colors disabled:bg-gray-400"
+            className="bg-black text-white px-6 py-2 rounded-md hover:bg-gray-800 disabled:bg-gray-400"
           >
-            {isLoading ? 'Publishing...' : 'Publish Article'}
+            {isLoading ? 'Uploading...' : 'Publish Blog Post'}
           </button>
         </form>
       )}
