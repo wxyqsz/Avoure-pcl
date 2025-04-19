@@ -1,3 +1,4 @@
+
 import { useState, useRef, useEffect } from 'react';
 import { supabase } from '../lib/supabase';
 import { useNavigate } from 'react-router-dom';
@@ -16,20 +17,7 @@ interface Article {
   likes: number;
   comments: number;
   views: number;
-  status: 'published' | 'pending' | 'rejected';
-  submittedBy?: string;
   additionalImages?: {url: string, caption: string, position: number}[];
-}
-
-// Interface for analytics data
-interface AnalyticsData {
-  totalViews: number;
-  totalLikes: number;
-  totalComments: number;
-  mostViewedArticle: Article | null;
-  mostLikedArticle: Article | null;
-  categoryBreakdown: {category: string, count: number}[];
-  recentTrend: {date: string, views: number}[];
 }
 
 // Interface for inline images
@@ -44,7 +32,7 @@ interface InlineImage {
 
 function AdminPage() {
   const navigate = useNavigate();
-  const [activeTab, setActiveTab] = useState<'upload' | 'manage' | 'analytics' | 'submissions'>('upload');
+  const [activeTab, setActiveTab] = useState<'upload' | 'manage'>('upload');
   const [isLoading, setIsLoading] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const inlineFileInputRef = useRef<HTMLInputElement>(null);
@@ -71,26 +59,12 @@ function AdminPage() {
   const [isLoadingBlogs, setIsLoadingBlogs] = useState(false);
   const [deleteInProgress, setDeleteInProgress] = useState<number | null>(null);
   
-  // State for managing user submissions
-  const [submissions, setSubmissions] = useState<Article[]>([]);
-  const [isLoadingSubmissions, setIsLoadingSubmissions] = useState(false);
-  const [submissionAction, setSubmissionAction] = useState<{id: number, action: string} | null>(null);
-  
-  // State for analytics
-  const [analyticsData, setAnalyticsData] = useState<AnalyticsData | null>(null);
-  const [isLoadingAnalytics, setIsLoadingAnalytics] = useState(false);
-  const [analyticsTimeframe, setAnalyticsTimeframe] = useState<'week' | 'month' | 'year'>('month');
-  
-  // Load data when tabs are activated
+  // Load blogs when the manage tab is active
   useEffect(() => {
     if (activeTab === 'manage') {
       fetchBlogs();
-    } else if (activeTab === 'analytics') {
-      fetchAnalytics();
-    } else if (activeTab === 'submissions') {
-      fetchSubmissions();
     }
-  }, [activeTab, analyticsTimeframe]);
+  }, [activeTab]);
   
   // Fetch blogs from Supabase
   const fetchBlogs = async () => {
@@ -99,7 +73,6 @@ function AdminPage() {
       const { data, error } = await supabase
         .from('articles')
         .select('*')
-        .eq('status', 'published')
         .order('date', { ascending: false });
         
       if (error) {
@@ -115,193 +88,6 @@ function AdminPage() {
       });
     } finally {
       setIsLoadingBlogs(false);
-    }
-  };
-  
-  // Fetch user submissions
-  const fetchSubmissions = async () => {
-    setIsLoadingSubmissions(true);
-    try {
-      const { data, error } = await supabase
-        .from('articles')
-        .select('*')
-        .eq('status', 'pending')
-        .order('date', { ascending: false });
-        
-      if (error) {
-        throw error;
-      }
-      
-      setSubmissions(data || []);
-    } catch (error) {
-      console.error('Error fetching submissions:', error);
-      setMessage({ 
-        text: `Failed to load submissions: ${(error as Error).message}`, 
-        type: 'error' 
-      });
-    } finally {
-      setIsLoadingSubmissions(false);
-    }
-  };
-  
-  // Fetch analytics data
-  const fetchAnalytics = async () => {
-    setIsLoadingAnalytics(true);
-    try {
-      // Get date range based on timeframe
-      const now = new Date();
-      let startDate = new Date();
-      
-      if (analyticsTimeframe === 'week') {
-        startDate.setDate(now.getDate() - 7);
-      } else if (analyticsTimeframe === 'month') {
-        startDate.setMonth(now.getMonth() - 1);
-      } else if (analyticsTimeframe === 'year') {
-        startDate.setFullYear(now.getFullYear() - 1);
-      }
-      
-      const startDateStr = startDate.toISOString();
-      
-      // Fetch articles for this time period
-      const { data: articles, error: articlesError } = await supabase
-        .from('articles')
-        .select('*')
-        .eq('status', 'published')
-        .gte('date', startDateStr);
-        
-      if (articlesError) throw articlesError;
-      
-      if (!articles || articles.length === 0) {
-        setAnalyticsData({
-          totalViews: 0,
-          totalLikes: 0,
-          totalComments: 0,
-          mostViewedArticle: null,
-          mostLikedArticle: null,
-          categoryBreakdown: [],
-          recentTrend: []
-        });
-        return;
-      }
-      
-      // Calculate total metrics
-      const totalViews = articles.reduce((sum, article) => sum + (article.views || 0), 0);
-      const totalLikes = articles.reduce((sum, article) => sum + (article.likes || 0), 0);
-      const totalComments = articles.reduce((sum, article) => sum + (article.comments || 0), 0);
-      
-      // Find most viewed and liked articles
-      const mostViewedArticle = [...articles].sort((a, b) => (b.views || 0) - (a.views || 0))[0];
-      const mostLikedArticle = [...articles].sort((a, b) => (b.likes || 0) - (a.likes || 0))[0];
-      
-      // Get category breakdown
-      const categories: {[key: string]: number} = {};
-      articles.forEach(article => {
-        if (!categories[article.category]) {
-          categories[article.category] = 0;
-        }
-        categories[article.category]++;
-      });
-      
-      const categoryBreakdown = Object.entries(categories).map(([category, count]) => ({
-        category,
-        count
-      }));
-      
-      // Create recent trend data (last 10 days)
-      const trendDates: {[key: string]: number} = {};
-      const endDate = new Date();
-      const trendStartDate = new Date();
-      
-      if (analyticsTimeframe === 'week') {
-        trendStartDate.setDate(endDate.getDate() - 7);
-      } else if (analyticsTimeframe === 'month') {
-        trendStartDate.setDate(endDate.getDate() - 30);
-      } else {
-        trendStartDate.setDate(endDate.getDate() - 60);
-      }
-      
-      // Initialize all dates in range
-      let currentDate = new Date(trendStartDate);
-      while (currentDate <= endDate) {
-        const dateStr = currentDate.toISOString().split('T')[0];
-        trendDates[dateStr] = 0;
-        currentDate.setDate(currentDate.getDate() + 1);
-      }
-      
-      // Populate with actual data
-      articles.forEach(article => {
-        const articleDate = new Date(article.date).toISOString().split('T')[0];
-        if (trendDates[articleDate] !== undefined) {
-          trendDates[articleDate] += article.views || 0;
-        }
-      });
-      
-      const recentTrend = Object.entries(trendDates).map(([date, views]) => ({
-        date,
-        views
-      })).sort((a, b) => a.date.localeCompare(b.date));
-      
-      setAnalyticsData({
-        totalViews,
-        totalLikes,
-        totalComments,
-        mostViewedArticle,
-        mostLikedArticle,
-        categoryBreakdown,
-        recentTrend
-      });
-      
-    } catch (error) {
-      console.error('Error fetching analytics:', error);
-      setMessage({
-        text: `Failed to load analytics: ${(error as Error).message}`,
-        type: 'error'
-      });
-    } finally {
-      setIsLoadingAnalytics(false);
-    }
-  };
-  
-  // Handle user submission actions (approve/reject)
-  const handleSubmissionAction = async (id: number, action: 'approve' | 'reject' | 'delete') => {
-    setSubmissionAction({ id, action });
-    
-    try {
-      if (action === 'delete') {
-        if (!window.confirm('Are you sure you want to delete this submission? This action cannot be undone.')) {
-          setSubmissionAction(null);
-          return;
-        }
-        
-        // Delete the submission
-        await handleDeleteBlog(id);
-        
-      } else {
-        const newStatus = action === 'approve' ? 'published' : 'rejected';
-        
-        const { error } = await supabase
-          .from('articles')
-          .update({ status: newStatus })
-          .eq('id', id);
-          
-        if (error) throw error;
-        
-        // Update local state
-        setSubmissions(submissions.filter(sub => sub.id !== id));
-        
-        setMessage({
-          text: `Submission ${action === 'approve' ? 'approved' : 'rejected'} successfully`,
-          type: 'success'
-        });
-      }
-    } catch (error) {
-      console.error(`Error ${action}ing submission:`, error);
-      setMessage({
-        text: `Failed to ${action} submission: ${(error as Error).message}`,
-        type: 'error'
-      });
-    } finally {
-      setSubmissionAction(null);
     }
   };
   
@@ -329,6 +115,7 @@ function AdminPage() {
         if (blogData && blogData.image && blogData.image.includes('blog-images')) {
           try {
             // Extract the filename from the URL
+            // This assumes the URL format ends with /storage/v1/object/public/blog-images/filename.ext
             const urlParts = blogData.image.split('/');
             const fileName = urlParts[urlParts.length - 1];
             
@@ -373,7 +160,6 @@ function AdminPage() {
         
         // Update the UI by removing the deleted blog
         setBlogs(blogs.filter(blog => blog.id !== id));
-        setSubmissions(submissions.filter(sub => sub.id !== id));
         setMessage({ text: 'Blog post deleted successfully', type: 'success' });
         
       } catch (error) {
@@ -665,7 +451,6 @@ function AdminPage() {
             likes: 0,
             comments: 0,
             views: 0,
-            status: 'published', // Auto-publish admin posts
             additionalImages: uploadedInlineImages
           }
         ]);
@@ -731,6 +516,8 @@ function AdminPage() {
     };
   }, [previewUrl, inlineImages]);
 
+  
+
   // Format date helper
   const formatDate = (dateString: string) => {
     try {
@@ -744,73 +531,39 @@ function AdminPage() {
       return dateString;
     }
   };
-  
-  // Format number helper (for analytics)
-  const formatNumber = (num: number) => {
-    if (num >= 1000000) {
-      return (num / 1000000).toFixed(1) + 'M';
-    } else if (num >= 1000) {
-      return (num / 1000).toFixed(1) + 'K';
-    }
-    return num.toString();
-  };
 
   return (
-    <div className="max-w-6xl mx-auto p-6">
-      {/* Header with Vogue-inspired styling */}
-      <div className="mb-10 border-b border-black pb-6 mt-24">
-        <h1 className="text-4xl font-serif tracking-tight uppercase text-center mb-2">EDITORIAL DASHBOARD</h1>
-        <p className="text-center text-gray-500 tracking-widest text-sm uppercase">MANAGE CONTENT • REVIEW SUBMISSIONS • MONITOR PERFORMANCE</p>
-      </div>
+    <div className="max-w-6xl mx-auto p-6 mt-10">
+      <h1 className="text-3xl font-serif mb-6">Admin Dashboard</h1>
       
-      {/* Main Navigation Tabs - Vogue-inspired */}
-      <div className="flex justify-center border-b border-gray-200 mb-8">
+      {/* Tabs */}
+      <div className="flex border-b border-gray-200 mb-6">
         <button
-          className={`px-6 py-3 font-medium uppercase tracking-wider text-sm ${
-            activeTab === 'upload' 
-              ? 'border-b-2 border-black text-black font-bold' 
+          className={`px-4 py-2 font-medium ${
+            activeTab === 'upload'
+              ? 'border-b-2 border-black text-black'
               : 'text-gray-500 hover:text-black'
           }`}
           onClick={() => setActiveTab('upload')}
         >
-          Admin Upload
+          Upload New Blog
         </button>
         <button
-          className={`px-6 py-3 font-medium uppercase tracking-wider text-sm ${
-            activeTab === 'manage' 
-              ? 'border-b-2 border-black text-black font-bold' 
+          className={`px-4 py-2 font-medium ${
+            activeTab === 'manage'
+              ? 'border-b-2 border-black text-black'
               : 'text-gray-500 hover:text-black'
           }`}
           onClick={() => setActiveTab('manage')}
         >
-          Manage Content
-        </button>
-        <button
-          className={`px-6 py-3 font-medium uppercase tracking-wider text-sm ${
-            activeTab === 'submissions' 
-              ? 'border-b-2 border-black text-black font-bold' 
-              : 'text-gray-500 hover:text-black'
-          }`}
-          onClick={() => setActiveTab('submissions')}
-        >
-          User Submissions
-        </button>
-        <button
-          className={`px-6 py-3 font-medium uppercase tracking-wider text-sm ${
-            activeTab === 'analytics' 
-              ? 'border-b-2 border-black text-black font-bold' 
-              : 'text-gray-500 hover:text-black'
-          }`}
-          onClick={() => setActiveTab('analytics')}
-        >
-          Analytics
+          Manage Blogs
         </button>
       </div>
       
       {message.text && (
         <div className={`p-4 mb-6 rounded-md ${
-          message.type === 'success' ? 'bg-green-100 text-green-700' : 
-          message.type === 'error' ? 'bg-red-100 text-red-700' : 
+          message.type === 'success' ? 'bg-green-100 text-green-700' :
+          message.type === 'error' ? 'bg-red-100 text-red-700' :
           'bg-blue-100 text-blue-700'
         }`}>
           {message.text}
@@ -819,646 +572,400 @@ function AdminPage() {
       
       {/* Upload Blog Form */}
       {activeTab === 'upload' && (
-        <div>
-          <h2 className="text-2xl font-serif mb-6 border-l-4 border-black pl-4">Create New Article</h2>
-          <form onSubmit={handleSubmit} className="space-y-6">
+        <form onSubmit={handleSubmit} className="space-y-6">
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Title</label>
+            <input
+              type="text"
+              name="title"
+              value={formData.title}
+              onChange={handleChange}
+              className="w-full border border-gray-300 rounded-md px-3 py-2"
+              required
+            />
+          </div>
+          
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Excerpt (short summary)</label>
+            <textarea
+              name="excerpt"
+              value={formData.excerpt}
+              onChange={handleChange}
+              className="w-full border border-gray-300 rounded-md px-3 py-2"
+              rows={3}
+              required
+            />
+          </div>
+          
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Content</label>
+            
+            {/* Text formatting toolbar */}
+            <div className="flex flex-wrap gap-2 mb-2 p-2 bg-gray-50 border border-gray-300 rounded-md">
+              <button 
+                type="button" 
+                onClick={() => applyFormatting('bold')}
+                className="px-2 py-1 bg-white border border-gray-300 rounded hover:bg-gray-100 text-sm font-bold"
+                title="Bold"
+              >
+                B
+              </button>
+              <button 
+                type="button" 
+                onClick={() => applyFormatting('italic')}
+                className="px-2 py-1 bg-white border border-gray-300 rounded hover:bg-gray-100 text-sm italic"
+                title="Italic"
+              >
+                I
+              </button>
+              <button 
+                type="button" 
+                onClick={() => applyFormatting('underline')}
+                className="px-2 py-1 bg-white border border-gray-300 rounded hover:bg-gray-100 text-sm underline"
+                title="Underline"
+              >
+                U
+              </button>
+              <div className="h-6 border-r border-gray-300 mx-1"></div>
+              <button 
+                type="button" 
+                onClick={() => applyFormatting('heading1')}
+                className="px-2 py-1 bg-white border border-gray-300 rounded hover:bg-gray-100 text-sm font-bold"
+                title="Heading 1"
+              >
+                H1
+              </button>
+              <button 
+                type="button" 
+                onClick={() => applyFormatting('heading2')}
+                className="px-2 py-1 bg-white border border-gray-300 rounded hover:bg-gray-100 text-sm font-bold"
+                title="Heading 2"
+              >
+                H2
+              </button>
+              <button 
+                type="button" 
+                onClick={() => applyFormatting('heading3')}
+                className="px-2 py-1 bg-white border border-gray-300 rounded hover:bg-gray-100 text-sm font-bold"
+                title="Heading 3"
+              >
+                H3
+              </button>
+              <div className="h-6 border-r border-gray-300 mx-1"></div>
+              <button 
+                type="button" 
+                onClick={() => applyFormatting('list')}
+                className="px-2 py-1 bg-white border border-gray-300 rounded hover:bg-gray-100 text-sm"
+                title="Bullet List"
+              >
+                • List
+              </button>
+              <button 
+                type="button" 
+                onClick={() => applyFormatting('olist')}
+                className="px-2 py-1 bg-white border border-gray-300 rounded hover:bg-gray-100 text-sm"
+                title="Numbered List"
+              >
+                1. List
+              </button>
+              <button 
+                type="button" 
+                onClick={() => applyFormatting('quote')}
+                className="px-2 py-1 bg-white border border-gray-300 rounded hover:bg-gray-100 text-sm"
+                title="Quote"
+              >
+                " Quote
+              </button>
+              <div className="h-6 border-r border-gray-300 mx-1"></div>
+              <button 
+                type="button" 
+                onClick={handleAddInlineImageClick}
+                className="px-2 py-1 bg-white border border-gray-300 rounded hover:bg-gray-100 text-sm"
+                title="Insert Image"
+              >
+                + Image
+              </button>
+            </div>
+            
+            <textarea
+              name="content"
+              ref={contentEditorRef}
+              value={formData.content}
+              onChange={handleChange}
+              onClick={handleContentClick}
+              onKeyUp={handleContentKeyUp}
+              className="w-full border border-gray-300 rounded-md px-3 py-2"
+              rows={10}
+              required
+            />
+            
+            {/* Hidden file input for inline images */}
+            <input
+              type="file"
+              ref={inlineFileInputRef}
+              onChange={handleInlineFileChange}
+              accept="image/*"
+              className="hidden"
+            />
+            
+            {/* Inline images preview and management */}
+            {inlineImages.length > 0 && (
+              <div className="mt-4 border border-gray-200 rounded-md p-4 bg-gray-50">
+                <h3 className="text-md font-medium mb-3">Inline Images</h3>
+                <div className="space-y-4">
+                  {inlineImages.map((image) => (
+                    <div key={image.id} className="flex items-start space-x-4 p-3 border border-gray-200 rounded-md bg-white">
+                      <div className="w-20 h-20 flex-shrink-0">
+                        <img 
+                          src={image.previewUrl || image.url} 
+                          alt="Preview" 
+                          className="h-full w-full object-cover rounded-md" 
+                        />
+                      </div>
+                      <div className="flex-grow">
+                        <div className="flex justify-between items-start">
+                          <input
+                            type="text"
+                            placeholder="Image caption (optional)"
+                            value={image.caption}
+                            onChange={(e) => handleInlineImageCaptionChange(image.id, e.target.value)}
+                            className="flex-grow border border-gray-300 rounded-md px-2 py-1 text-sm"
+                          />
+                          <button 
+                            type="button"
+                            onClick={() => removeInlineImage(image.id)}
+                            className="ml-2 text-red-500 hover:text-red-700"
+                          >
+                            Remove
+                          </button>
+                        </div>
+                        <p className="text-xs text-gray-500 mt-1">
+                          This image will appear where marker [IMAGE:{image.id}] is in your content
+                        </p>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+          
+          <div className="grid grid-cols-2 gap-4">
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Title</label>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Category</label>
+              <select
+                name="category"
+                value={formData.category}
+                onChange={handleChange}
+                className="w-full border border-gray-300 rounded-md px-3 py-2"
+              >
+                <option value="fashion">Fashion</option>
+                <option value="beauty">Beauty</option>
+                <option value="lifestyle">Lifestyle</option>
+                <option value="latest-news">Latest News</option>
+                <option value="shopping">Shopping</option>
+              </select>
+            </div>
+            
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Gender (if applicable)</label>
+              <select
+                name="gender"
+                value={formData.gender}
+                onChange={handleChange}
+                className="w-full border border-gray-300 rounded-md px-3 py-2"
+              >
+                <option value="women">Women</option>
+                <option value="men">Men</option>
+                <option value="">Not applicable</option>
+              </select>
+            </div>
+          </div>
+          
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Featured Image</label>
+            <div className="space-y-3">
+              {/* Hidden file input */}
               <input
-                type="text"
-                name="title"
-                value={formData.title}
-                onChange={handleChange}
-                className="w-full border border-gray-300 rounded-md px-3 py-2"
-                required
-                placeholder="Enter article title"
+                type="file"
+                ref={fileInputRef}
+                onChange={handleFileChange}
+                accept="image/*"
+                className="hidden"
               />
-            </div>
-            
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Excerpt (short summary)</label>
-              <textarea
-                name="excerpt"
-                value={formData.excerpt}
-                onChange={handleChange}
-                className="w-full border border-gray-300 rounded-md px-3 py-2"
-                rows={3}
-                required
-                placeholder="A brief summary of the article (appears in previews)"
-              />
-            </div>
-            
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Content</label>
               
-              {/* Text formatting toolbar */}
-              <div className="flex flex-wrap gap-2 mb-2 border border-gray-200 rounded-md p-2 bg-gray-50">
-                <button 
-                  type="button" 
-                  onClick={() => applyFormatting('bold')} 
-                  className="px-2 py-1 bg-white border rounded hover:bg-gray-100"
-                  title="Bold"
+              {/* Custom upload button and URL input */}
+              <div className="flex flex-col sm:flex-row gap-3">
+                <button
+                  type="button"
+                  onClick={handleBrowseClick}
+                  className="bg-gray-200 text-gray-800 px-4 py-2 rounded-md hover:bg-gray-300"
                 >
-                  <strong>B</strong>
+                  {selectedFile ? 'Change Image' : 'Browse Images'}
                 </button>
-                <button 
-                  type="button" 
-                  onClick={() => applyFormatting('italic')} 
-                  className="px-2 py-1 bg-white border rounded hover:bg-gray-100"
-                  title="Italic"
-                >
-                  <em>I</em>
-                </button>
-                <button 
-                  type="button" 
-                  onClick={() => applyFormatting('underline')} 
-                  className="px-2 py-1 bg-white border rounded hover:bg-gray-100"
-                  title="Underline"
-                >
-                  <u>U</u>
-                </button>
-                <button 
-                  type="button" 
-                  onClick={() => applyFormatting('heading1')} 
-                  className="px-2 py-1 bg-white border rounded hover:bg-gray-100"
-                  title="Heading 1"
-                >
-                  H1
-                </button>
-                <button 
-                  type="button" 
-                  onClick={() => applyFormatting('heading2')} 
-                  className="px-2 py-1 bg-white border rounded hover:bg-gray-100"
-                  title="Heading 2"
-                >
-                  H2
-                </button>
-                <button 
-                  type="button" 
-                  onClick={() => applyFormatting('heading3')} 
-                  className="px-2 py-1 bg-white border rounded hover:bg-gray-100"
-                  title="Heading 3"
-                >
-                  H3
-                </button>
-                <button 
-                  type="button" 
-                  onClick={() => applyFormatting('quote')} 
-                  className="px-2 py-1 bg-white border rounded hover:bg-gray-100"
-                  title="Blockquote"
-                >
-                  Quote
-                </button>
-                <button 
-                  type="button" 
-                  onClick={() => applyFormatting('list')} 
-                  className="px-2 py-1 bg-white border rounded hover:bg-gray-100"
-                  title="Bullet List"
-                >
-                  • List
-                </button>
-                <button 
-                  type="button" 
-                  onClick={() => applyFormatting('olist')} 
-                  className="px-2 py-1 bg-white border rounded hover:bg-gray-100"
-                  title="Numbered List"
-                >
-                  1. List
-                </button>
-                <button 
-                  type="button" 
-                  onClick={handleAddInlineImageClick} 
-                  className="px-2 py-1 bg-white border border-black rounded hover:bg-gray-100"
-                  title="Add Image"
-                >
-                  + Image
-                </button>
-                <input 
-                  type="file"
-                  ref={inlineFileInputRef}
-                  onChange={handleInlineFileChange}
-                  accept="image/*"
-                  className="hidden"
-                />
+                
+                <div className="flex-1">
+                  <input
+                    type="text"
+                    name="image"
+                    value={formData.image}
+                    onChange={handleChange}
+                    placeholder="Or paste image URL here"
+                    className="w-full border border-gray-300 rounded-md px-3 py-2"
+                  />
+                  {selectedFile && (
+                    <p className="text-sm text-gray-500 mt-1">
+                      Selected file: {selectedFile.name} ({(selectedFile.size / 1024).toFixed(1)}KB)
+                    </p>
+                  )}
+                </div>
               </div>
               
-              <textarea
-                name="content"
-                value={formData.content}
-                onChange={handleChange}
-                onClick={handleContentClick}
-                onKeyUp={handleContentKeyUp}
-                ref={contentEditorRef}
-                className="w-full border border-gray-300 rounded-md px-3 py-2"
-                rows={15}
-                required
-                placeholder="Write your article content here. You can use Markdown formatting."
-              />
-              
-              {/* Preview inline images */}
-              {inlineImages.length > 0 && (
-                <div className="my-4 border-t border-gray-200 pt-4">
-                  <h3 className="text-lg font-medium mb-2">Inline Images</h3>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
-                    {inlineImages.map(img => (
-                      <div key={img.id} className="border rounded-md p-3">
-                        <img 
-                          src={img.previewUrl} 
-                          alt="Preview" 
-                          className="w-full h-40 object-cover mb-2"
-                        />
-                        <input
-                          type="text"
-                          value={img.caption}
-                          onChange={(e) => handleInlineImageCaptionChange(img.id, e.target.value)}
-                          className="w-full border border-gray-300 rounded-md px-2 py-1 mb-2"
-                          placeholder="Image caption"
-                        />
-                        <button
-                          type="button"
-                          onClick={() => removeInlineImage(img.id)}
-                          className="text-red-600 text-sm hover:text-red-800"
-                        >
-                          Remove Image
-                        </button>
-                      </div>
-                    ))}
-                  </div>
+              {/* Image preview */}
+              {(previewUrl || formData.image) && (
+                <div className="mt-2">
+                  <p className="text-sm text-gray-500 mb-2">Preview:</p>
+                  <img 
+                    src={previewUrl || formData.image} 
+                    alt="Preview" 
+                    className="h-48 object-cover rounded-md border border-gray-200" 
+                    onError={(e) => {
+                      (e.target as HTMLImageElement).src = '/placeholder-image.jpg';
+                      setMessage({text: 'Warning: Unable to load image preview', type: 'error'});
+                    }}
+                  />
                 </div>
               )}
             </div>
-            
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Category</label>
-                <select
-                  name="category"
-                  value={formData.category}
-                  onChange={handleChange}
-                  className="w-full border border-gray-300 rounded-md px-3 py-2"
-                  required
-                >
-                  <option value="fashion">Fashion</option>
-                  <option value="beauty">Beauty</option>
-                  <option value="lifestyle">Lifestyle</option>
-                  <option value="culture">Culture</option>
-                  <option value="wellness">Wellness</option>
-                  <option value="celebrity">Celebrity</option>
-                </select>
-              </div>
-              
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Gender Focus</label>
-                <select
-                  name="gender"
-                  value={formData.gender}
-                  onChange={handleChange}
-                  className="w-full border border-gray-300 rounded-md px-3 py-2"
-                  required
-                >
-                  <option value="women">Women</option>
-                  <option value="men">Men</option>
-                  <option value="unisex">Unisex</option>
-                </select>
-              </div>
-            </div>
-            
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Author</label>
-              <input
-                type="text"
-                name="author"
-                value={formData.author}
-                onChange={handleChange}
-                className="w-full border border-gray-300 rounded-md px-3 py-2"
-                required
-                placeholder="Author name"
-              />
-            </div>
-            
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Main Image</label>
-              <div className="border border-gray-300 rounded-md p-4 bg-gray-50">
-                {/* Image preview */}
-                {previewUrl && (
-                  <div className="mb-4">
-                    <img 
-                      src={previewUrl} 
-                      alt="Preview" 
-                      className="max-h-64 mx-auto"
-                    />
-                  </div>
-                )}
-                
-                <div className="flex flex-col md:flex-row gap-4">
-                  <div className="flex-1">
-                    <label className="block text-sm font-medium text-gray-700 mb-1">Upload Image</label>
-                    <div className="flex items-center">
-                      <button
-                        type="button"
-                        onClick={handleBrowseClick}
-                        className="bg-white border border-gray-300 rounded-md px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
-                      >
-                        Browse...
-                      </button>
-                      <input
-                        type="file"
-                        ref={fileInputRef}
-                        onChange={handleFileChange}
-                        accept="image/*"
-                        className="hidden"
-                      />
-                      <span className="ml-2 text-sm text-gray-500">
-                        {selectedFile ? selectedFile.name : 'No file selected'}
-                      </span>
-                    </div>
-                  </div>
-                  
-                  <div className="flex-1">
-                    <label className="block text-sm font-medium text-gray-700 mb-1">Or use image URL</label>
-                    <input
-                      type="text"
-                      name="image"
-                      value={formData.image}
-                      onChange={handleChange}
-                      className="w-full border border-gray-300 rounded-md px-3 py-2"
-                      placeholder="https://example.com/image.jpg"
-                    />
-                  </div>
-                </div>
-              </div>
-            </div>
-            
-            <div className="pt-4">
-              <button
-                type="submit"
-                disabled={isLoading}
-                className={`w-full bg-black text-white py-3 rounded-md hover:bg-gray-800 uppercase tracking-wider ${
-                  isLoading ? 'opacity-50 cursor-not-allowed' : ''
-                }`}
-              >
-                {isLoading ? 'Publishing...' : 'Publish Article'}
-              </button>
-            </div>
-          </form>
-        </div>
+          </div>
+          
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Author</label>
+            <input
+              type="text"
+              name="author"
+              value={formData.author}
+              onChange={handleChange}
+              className="w-full border border-gray-300 rounded-md px-3 py-2"
+              required
+            />
+          </div>
+          
+          <button
+            type="submit"
+            disabled={isLoading}
+            className="bg-black text-white px-6 py-2 rounded-md hover:bg-gray-800 disabled:bg-gray-400"
+          >
+            {isLoading ? 'Uploading...' : 'Publish Blog Post'}
+          </button>
+        </form>
       )}
       
-     {/* Manage Blogs */}
-{activeTab === 'manage' && (
-  <div>
-    <div className="flex justify-between items-center mb-4">
-      <h2 className="text-xl font-medium border-l-4 border-black pl-4">Manage Blog Posts</h2>
-      <button 
-        onClick={fetchBlogs}
-        className="text-sm bg-gray-100 px-3 py-1 rounded hover:bg-gray-200"
-        disabled={isLoadingBlogs}
-      >
-        {isLoadingBlogs ? 'Refreshing...' : 'Refresh'}
-      </button>
-    </div>
-    
-    {isLoadingBlogs ? (
-      <div className="text-center py-8">
-        <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-black mx-auto"></div>
-        <p className="mt-4 text-gray-600">Loading blogs...</p>
-      </div>
-    ) : blogs.length === 0 ? (
-      <div className="text-center py-8 text-gray-500 border border-gray-200 rounded-md">
-        No blog posts found
-      </div>
-    ) : (
-      <div className="overflow-x-auto">
-        <table className="min-w-full divide-y divide-gray-200">
-          <thead className="bg-gray-50">
-            <tr>
-              <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                Title
-              </th>
-              <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                Category
-              </th>
-              <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                Author
-              </th>
-              <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                Date
-              </th>
-              <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                Metrics
-              </th>
-              <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                Actions
-              </th>
-            </tr>
-          </thead>
-          <tbody className="bg-white divide-y divide-gray-200">
-            {blogs.map((blog) => (
-              <tr key={blog.id} className="hover:bg-gray-50">
-                <td className="px-6 py-4 whitespace-nowrap">
-                  <div className="flex items-center">
-                    <div className="h-10 w-10 flex-shrink-0">
-                      <img 
-                        className="h-10 w-10 rounded object-cover" 
-                        src={blog.image} 
-                        alt={blog.title}
-                        onError={(e) => {
-                          const target = e.target as HTMLImageElement;
-                          target.src = '/placeholder-image.jpg';
-                        }}
-                      />
-                    </div>
-                    <div className="ml-4">
-                      <div className="text-sm font-medium text-gray-900">{blog.title}</div>
-                      <div className="text-xs text-gray-500 line-clamp-1">{blog.excerpt}</div>
-                    </div>
-                  </div>
-                </td>
-                <td className="px-6 py-4 whitespace-nowrap">
-                  <span className="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-gray-100 text-gray-800">
-                    {blog.category} {blog.gender ? `• ${blog.gender}` : ''}
-                  </span>
-                </td>
-                <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                  {blog.author}
-                </td>
-                <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                  {formatDate(blog.date)}
-                </td>
-                <td className="px-6 py-4 whitespace-nowrap">
-                  <div className="flex space-x-3 text-xs text-gray-500">
-                    <span>{blog.views} Views</span>
-                    <span>{blog.likes} Likes</span>
-                    <span>{blog.comments} Comments</span>
-                  </div>
-                </td>
-                <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
-                  <div className="flex space-x-2">
-                    <button
-                      onClick={() => navigate(`/blogs/${blog.id}`)}
-                      className="text-indigo-600 hover:text-indigo-900"
-                    >
-                      View
-                    </button>
-                    <button
-                      onClick={() => navigate(`/admin/edit/${blog.id}`)}
-                      className="text-blue-600 hover:text-blue-900"
-                    >
-                      Edit
-                    </button>
-                    <button
-                      onClick={() => handleDeleteBlog(blog.id)}
-                      disabled={deleteInProgress === blog.id}
-                      className="text-red-600 hover:text-red-900 disabled:text-gray-400"
-                    >
-                      {deleteInProgress === blog.id ? 'Deleting...' : 'Delete'}
-                    </button>
-                  </div>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-    )}
-  </div>
-)}
-      
-      {/* User Submissions */}
-      {activeTab === 'submissions' && (
+      {/* Manage Blogs Table */}
+      {activeTab === 'manage' && (
         <div>
-          <div className="flex justify-between items-center mb-6">
-            <h2 className="text-2xl font-serif border-l-4 border-black pl-4">Review User Submissions</h2>
-            <button
-              onClick={fetchSubmissions}
-              className="text-sm px-4 py-2 border border-black rounded-md hover:bg-black hover:text-white"
+          <div className="flex justify-between items-center mb-4">
+            <h2 className="text-xl font-medium">Manage Blog Posts</h2>
+            <button 
+              onClick={fetchBlogs}
+              className="text-sm bg-gray-100 px-3 py-1 rounded hover:bg-gray-200"
+              disabled={isLoadingBlogs}
             >
-              Refresh List
+              {isLoadingBlogs ? 'Refreshing...' : 'Refresh'}
             </button>
           </div>
           
-          {isLoadingSubmissions ? (
-            <div className="text-center py-10">
-              <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-black mx-auto"></div>
-              <p className="mt-4 text-gray-600">Loading submissions...</p>
-            </div>
-          ) : submissions.length === 0 ? (
-            <div className="text-center py-10 border border-gray-200 rounded-md">
-              <p className="text-gray-600">No pending submissions found.</p>
-            </div>
+          {isLoadingBlogs ? (
+            <div className="text-center py-8">Loading blogs...</div>
+          ) : blogs.length === 0 ? (
+            <div className="text-center py-8 text-gray-500">No blog posts found</div>
           ) : (
-            <div className="grid grid-cols-1 gap-6">
-              {submissions.map(submission => (
-                <div key={submission.id} className="border border-gray-200 rounded-md overflow-hidden">
-                  <div className="flex flex-col md:flex-row">
-                    <div className="w-full md:w-1/4">
-                      <img 
-                        src={submission.image} 
-                        alt={submission.title}
-                        className="w-full h-48 object-cover"
-                        onError={(e) => {
-                          const target = e.target as HTMLImageElement;
-                          target.src = 'https://via.placeholder.com/400x300?text=Image+Not+Found';
-                        }}
-                      />
-                    </div>
-                    <div className="p-4 w-full md:w-3/4">
-                      <div className="flex justify-between items-start">
-                        <div>
-                          <h3 className="text-xl font-serif mb-2">{submission.title}</h3>
-                          <p className="text-sm text-gray-600 mb-2">
-                            <span className="uppercase">{submission.category}</span> • {formatDate(submission.date)} • 
-                            By {submission.author} • 
-                            <span className="text-orange-600 font-semibold ml-1">Submitted by: {submission.submittedBy || 'Anonymous'}</span>
-                          </p>
+            <div className="overflow-x-auto">
+              <table className="min-w-full divide-y divide-gray-200">
+                <thead className="bg-gray-50">
+                  <tr>
+                    <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      Title
+                    </th>
+                    <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      Category
+                    </th>
+                    <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      Author
+                    </th>
+                    <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      Date
+                    </th>
+                    <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      Actions
+                    </th>
+                  </tr>
+                </thead>
+                <tbody className="bg-white divide-y divide-gray-200">
+                  {blogs.map((blog) => (
+                    <tr key={blog.id} className="hover:bg-gray-50">
+                      <td className="px-6 py-4 whitespace-nowrap">
+                        <div className="flex items-center">
+                          <div className="h-10 w-10 flex-shrink-0">
+                            <img 
+                              className="h-10 w-10 rounded-full object-cover" 
+                              src={blog.image || '/placeholder-image.jpg'} 
+                              alt="" 
+                              onError={(e) => {
+                                (e.target as HTMLImageElement).src = '/placeholder-image.jpg';
+                              }}
+                            />
+                          </div>
+                          <div className="ml-4">
+                            <div className="text-sm font-medium text-gray-900">{blog.title}</div>
+                            <div className="text-xs text-gray-500">
+                              {blog.additionalImages && blog.additionalImages.length > 0 ? (
+                                <span className="text-xs text-green-600">
+                                  {blog.additionalImages.length} additional {blog.additionalImages.length === 1 ? 'image' : 'images'}
+                                </span>
+                              ) : null}
+                            </div>
+                          </div>
                         </div>
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap">
+                        <span className="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-gray-100 text-gray-800">
+                          {blog.category} {blog.gender ? `• ${blog.gender}` : ''}
+                        </span>
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                        {blog.author}
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                        {formatDate(blog.date)}
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
                         <div className="flex space-x-2">
                           <button
-                            onClick={() => handleSubmissionAction(submission.id, 'approve')}
-                            disabled={submissionAction?.id === submission.id}
-                            className={`bg-green-100 text-green-800 px-3 py-1 rounded-md text-sm hover:bg-green-200 ${
-                              submissionAction?.id === submission.id ? 'opacity-50 cursor-not-allowed' : ''
-                            }`}
+                            onClick={() => navigate(`/blogs/${blog.id}`)}
+                            className="text-indigo-600 hover:text-indigo-900"
                           >
-                            {submissionAction?.id === submission.id && submissionAction?.action === 'approve' ? 'Approving...' : 'Approve'}
+                            View
                           </button>
                           <button
-                            onClick={() => handleSubmissionAction(submission.id, 'reject')}
-                            disabled={submissionAction?.id === submission.id}
-                            className={`bg-red-100 text-red-800 px-3 py-1 rounded-md text-sm hover:bg-red-200 ${
-                              submissionAction?.id === submission.id ? 'opacity-50 cursor-not-allowed' : ''
-                            }`}
+                            onClick={() => navigate(`/admin/edit/${blog.id}`)}
+                            className="text-blue-600 hover:text-blue-900"
                           >
-                            {submissionAction?.id === submission.id && submissionAction?.action === 'reject' ? 'Rejecting...' : 'Reject'}
+                            Edit
                           </button>
                           <button
-                            onClick={() => handleSubmissionAction(submission.id, 'delete')}
-                            disabled={submissionAction?.id === submission.id}
-                            className={`bg-gray-100 text-gray-800 px-3 py-1 rounded-md text-sm hover:bg-gray-200 ${
-                              submissionAction?.id === submission.id ? 'opacity-50 cursor-not-allowed' : ''
-                            }`}
+                            onClick={() => handleDeleteBlog(blog.id)}
+                            disabled={deleteInProgress === blog.id}
+                            className="text-red-600 hover:text-red-900 disabled:text-gray-400"
                           >
-                            {submissionAction?.id === submission.id && submissionAction?.action === 'delete' ? 'Deleting...' : 'Delete'}
+                            {deleteInProgress === blog.id ? 'Deleting...' : 'Delete'}
                           </button>
                         </div>
-                      </div>
-                      <p className="text-gray-700 my-2 line-clamp-2">{submission.excerpt}</p>
-                      <div className="mt-4">
-                        <button
-                          onClick={() => navigate(`/preview/${submission.id}`)}
-                          className="text-sm underline text-gray-600 hover:text-black"
-                        >
-                          Preview Full Article
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-      )}
-      
-      {/* Analytics Dashboard */}
-      {activeTab === 'analytics' && (
-        <div>
-          <div className="flex justify-between items-center mb-6">
-            <h2 className="text-2xl font-serif border-l-4 border-black pl-4">Analytics Dashboard</h2>
-            <div className="flex space-x-2">
-              <select
-                value={analyticsTimeframe}
-                onChange={(e) => setAnalyticsTimeframe(e.target.value as 'week' | 'month' | 'year')}
-                className="border border-gray-300 rounded-md px-3 py-2 text-sm"
-              >
-                <option value="week">Last 7 Days</option>
-                <option value="month">Last 30 Days</option>
-                <option value="year">Last 12 Months</option>
-              </select>
-              <button
-                onClick={fetchAnalytics}
-                className="text-sm px-4 py-2 border border-black rounded-md hover:bg-black hover:text-white"
-              >
-                Refresh Data
-              </button>
-            </div>
-          </div>
-          
-          {isLoadingAnalytics ? (
-            <div className="text-center py-10">
-              <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-black mx-auto"></div>
-              <p className="mt-4 text-gray-600">Loading analytics data...</p>
-            </div>
-          ) : analyticsData ? (
-            <div className="space-y-8">
-              {/* Key metrics */}
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                <div className="bg-white p-6 rounded-md shadow-sm border border-gray-200">
-                  <h3 className="text-sm uppercase text-gray-500 mb-1">Total Views</h3>
-                  <p className="text-3xl font-serif">{formatNumber(analyticsData.totalViews)}</p>
-                </div>
-                <div className="bg-white p-6 rounded-md shadow-sm border border-gray-200">
-                  <h3 className="text-sm uppercase text-gray-500 mb-1">Total Likes</h3>
-                  <p className="text-3xl font-serif">{formatNumber(analyticsData.totalLikes)}</p>
-                </div>
-                <div className="bg-white p-6 rounded-md shadow-sm border border-gray-200">
-                  <h3 className="text-sm uppercase text-gray-500 mb-1">Total Comments</h3>
-                  <p className="text-3xl font-serif">{formatNumber(analyticsData.totalComments)}</p>
-                </div>
-              </div>
-              
-              {/* Top performing content */}
-              <div className="bg-white p-6 rounded-md shadow-sm border border-gray-200">
-                <h3 className="text-lg font-medium mb-4">Top Performing Content</h3>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                  {analyticsData.mostViewedArticle && (
-                    <div className="border border-gray-100 rounded-md p-4">
-                      <h4 className="text-sm uppercase text-gray-500 mb-1">Most Viewed Article</h4>
-                      <p className="font-serif text-lg mb-1">{analyticsData.mostViewedArticle.title}</p>
-                      <div className="flex justify-between text-sm">
-                        <span>{formatNumber(analyticsData.mostViewedArticle.views || 0)} views</span>
-                        <span>{formatDate(analyticsData.mostViewedArticle.date)}</span>
-                      </div>
-                    </div>
-                  )}
-                  
-                  {analyticsData.mostLikedArticle && (
-                    <div className="border border-gray-100 rounded-md p-4">
-                      <h4 className="text-sm uppercase text-gray-500 mb-1">Most Liked Article</h4>
-                      <p className="font-serif text-lg mb-1">{analyticsData.mostLikedArticle.title}</p>
-                      <div className="flex justify-between text-sm">
-                        <span>{formatNumber(analyticsData.mostLikedArticle.likes || 0)} likes</span>
-                        <span>{formatDate(analyticsData.mostLikedArticle.date)}</span>
-                      </div>
-                    </div>
-                  )}
-                </div>
-              </div>
-              
-              {/* Category distribution */}
-              <div className="bg-white p-6 rounded-md shadow-sm border border-gray-200">
-                <h3 className="text-lg font-medium mb-4">Category Distribution</h3>
-                {analyticsData.categoryBreakdown.length > 0 ? (
-                  <div className="space-y-2">
-                    {analyticsData.categoryBreakdown.map(item => (
-                      <div key={item.category} className="flex items-center">
-                        <div className="w-24 font-medium capitalize">{item.category}</div>
-                        <div className="flex-1 mx-4">
-                          <div className="h-2 bg-gray-200 rounded-full overflow-hidden">
-                            <div 
-                              className="h-full bg-black" 
-                              style={{ 
-                                width: `${(item.count / analyticsData.categoryBreakdown.reduce((sum, cat) => sum + cat.count, 0)) * 100}%` 
-                              }}
-                            ></div>
-                          </div>
-                        </div>
-                        <div className="w-10 text-right">{item.count}</div>
-                      </div>
-                    ))}
-                  </div>
-                ) : (
-                  <p className="text-gray-600">No category data available.</p>
-                )}
-              </div>
-              
-              {/* Recent traffic trend */}
-              <div className="bg-white p-6 rounded-md shadow-sm border border-gray-200">
-                <h3 className="text-lg font-medium mb-4">Traffic Trend</h3>
-                {analyticsData.recentTrend.length > 0 ? (
-                  <div className="h-64">
-                    <div className="flex h-full items-end space-x-1">
-                      {analyticsData.recentTrend.map((day) => {
-                        const maxViews = Math.max(...analyticsData.recentTrend.map(d => d.views));
-                        const height = maxViews > 0 ? (day.views / maxViews) * 100 : 0;
-                        
-                        return (
-                          <div 
-                            key={day.date}
-                            className="flex-1 flex flex-col items-center group"
-                          >
-                            <div className="w-full">
-                              <div 
-                                className="w-full bg-black hover:bg-gray-700 transition-all" 
-                                style={{ height: `${height}%` }}
-                              ></div>
-                            </div>
-                            <div className="text-xs mt-1 text-gray-600 truncate w-full text-center">
-                              {new Date(day.date).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  </div>
-                ) : (
-                  <p className="text-gray-600">No trend data available.</p>
-                )}
-              </div>
-            </div>
-          ) : (
-            <div className="text-center py-10 border border-gray-200 rounded-md">
-              <p className="text-gray-600">No analytics data available.</p>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             </div>
           )}
         </div>
