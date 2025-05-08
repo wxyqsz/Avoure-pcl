@@ -1,4 +1,3 @@
-
 import { useState, useRef, useEffect } from 'react';
 import { supabase } from '../lib/supabase';
 import { useNavigate } from 'react-router-dom';
@@ -27,7 +26,7 @@ interface InlineImage {
   url: string;
   previewUrl: string;
   caption: string;
-  position: number; // Cursor position in the content where image should appear
+  position: number;
 }
 
 function AdminPage() {
@@ -49,12 +48,8 @@ function AdminPage() {
     author: ''
   });
   const [message, setMessage] = useState({ text: '', type: '' });
-  
-  // State for managing inline images
   const [inlineImages, setInlineImages] = useState<InlineImage[]>([]);
   const [currentCursorPosition, setCurrentCursorPosition] = useState<number>(0);
-  
-  // State for managing blogs
   const [blogs, setBlogs] = useState<Article[]>([]);
   const [isLoadingBlogs, setIsLoadingBlogs] = useState(false);
   const [deleteInProgress, setDeleteInProgress] = useState<number | null>(null);
@@ -75,10 +70,7 @@ function AdminPage() {
         .select('*')
         .order('date', { ascending: false });
         
-      if (error) {
-        throw error;
-      }
-      
+      if (error) throw error;
       setBlogs(data || []);
     } catch (error) {
       console.error('Error fetching blogs:', error);
@@ -96,7 +88,7 @@ function AdminPage() {
     if (window.confirm('Are you sure you want to delete this blog post? This action cannot be undone.')) {
       setDeleteInProgress(id);
       try {
-        // First, get the image URL to delete from storage
+        // Get the image URL to delete from storage
         const { data: blogData } = await supabase
           .from('articles')
           .select('image, additionalImages')
@@ -111,30 +103,21 @@ function AdminPage() {
           
         if (deleteError) throw deleteError;
         
-        // If the image is from Supabase storage, try to delete it too
+        // Delete main image if it's in Supabase storage
         if (blogData && blogData.image && blogData.image.includes('blog-images')) {
           try {
-            // Extract the filename from the URL
-            // This assumes the URL format ends with /storage/v1/object/public/blog-images/filename.ext
             const urlParts = blogData.image.split('/');
             const fileName = urlParts[urlParts.length - 1];
             
             if (fileName) {
-              const { error: storageError } = await supabase.storage
-                .from('blog-images')
-                .remove([fileName]);
-                
-              if (storageError) {
-                console.warn('Could not delete main image from storage:', storageError);
-              }
+              await supabase.storage.from('blog-images').remove([fileName]);
             }
           } catch (imageError) {
             console.warn('Error trying to delete main image:', imageError);
-            // Continue even if image deletion fails
           }
         }
         
-        // Delete additional images if they exist
+        // Delete additional images if any
         if (blogData && blogData.additionalImages && blogData.additionalImages.length > 0) {
           for (const imageData of blogData.additionalImages) {
             if (imageData.url && imageData.url.includes('blog-images')) {
@@ -143,13 +126,7 @@ function AdminPage() {
                 const fileName = urlParts[urlParts.length - 1];
                 
                 if (fileName) {
-                  const { error: storageError } = await supabase.storage
-                    .from('blog-images')
-                    .remove([fileName]);
-                    
-                  if (storageError) {
-                    console.warn(`Could not delete additional image ${fileName} from storage:`, storageError);
-                  }
+                  await supabase.storage.from('blog-images').remove([fileName]);
                 }
               } catch (imageError) {
                 console.warn('Error trying to delete additional image:', imageError);
@@ -158,7 +135,7 @@ function AdminPage() {
           }
         }
         
-        // Update the UI by removing the deleted blog
+        // Update the UI
         setBlogs(blogs.filter(blog => blog.id !== id));
         setMessage({ text: 'Blog post deleted successfully', type: 'success' });
         
@@ -180,28 +157,14 @@ function AdminPage() {
   };
 
   // Track cursor position in content area
-  const handleContentCursorChange = (e: React.MouseEvent<HTMLTextAreaElement> | React.KeyboardEvent<HTMLTextAreaElement>) => {
-    const textarea = e.target as HTMLTextAreaElement;
-    setCurrentCursorPosition(textarea.selectionStart);
-  };
-
-  const handleContentClick = (e: React.MouseEvent<HTMLTextAreaElement>) => {
-    handleContentCursorChange(e);
-  };
-
-  const handleContentKeyUp = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    handleContentCursorChange(e);
-  };
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files[0]) {
       const file = e.target.files[0];
       setSelectedFile(file);
       
-      // Clean up previous preview URL to avoid memory leaks
-      if (previewUrl) {
-        URL.revokeObjectURL(previewUrl);
-      }
+      // Clean up previous preview URL
+      if (previewUrl) URL.revokeObjectURL(previewUrl);
       
       // Create a preview URL
       const objectUrl = URL.createObjectURL(file);
@@ -249,14 +212,18 @@ function AdminPage() {
 
   const handleInlineImageCaptionChange = (id: string, caption: string) => {
     setInlineImages(prev => 
-      prev.map(img => 
-        img.id === id ? { ...img, caption } : img
-      )
+      prev.map(img => img.id === id ? { ...img, caption } : img)
     );
   };
 
   const removeInlineImage = (id: string) => {
-    // Remove the image from the inline images array
+    // Clean up the preview URL
+    const imageToRemove = inlineImages.find(img => img.id === id);
+    if (imageToRemove && imageToRemove.previewUrl) {
+      URL.revokeObjectURL(imageToRemove.previewUrl);
+    }
+    
+    // Remove the image from the array
     setInlineImages(prev => prev.filter(img => img.id !== id));
     
     // Remove the placeholder from the content
@@ -265,20 +232,6 @@ function AdminPage() {
       ...prev,
       content: newContent
     }));
-    
-    // Clean up the preview URL
-    const imageToRemove = inlineImages.find(img => img.id === id);
-    if (imageToRemove && imageToRemove.previewUrl) {
-      URL.revokeObjectURL(imageToRemove.previewUrl);
-    }
-  };
-
-  const handleBrowseClick = () => {
-    fileInputRef.current?.click();
-  };
-
-  const handleAddInlineImageClick = () => {
-    inlineFileInputRef.current?.click();
   };
 
   // Text formatting functions
@@ -293,45 +246,23 @@ function AdminPage() {
     let formattedText = '';
     
     switch (format) {
-      case 'bold':
-        formattedText = `**${selectedText}**`;
-        break;
-      case 'italic':
-        formattedText = `*${selectedText}*`;
-        break;
-      case 'underline':
-        formattedText = `<u>${selectedText}</u>`;
-        break;
-      case 'heading1':
-        formattedText = `\n# ${selectedText}\n`;
-        break;
-      case 'heading2':
-        formattedText = `\n## ${selectedText}\n`;
-        break;
-      case 'heading3':
-        formattedText = `\n### ${selectedText}\n`;
-        break;
-      case 'quote':
-        formattedText = `\n> ${selectedText}\n`;
-        break;
-      case 'list':
-        formattedText = selectedText.split('\n').map(line => `- ${line}`).join('\n');
-        break;
-      case 'olist':
-        formattedText = selectedText.split('\n').map((line, i) => `${i+1}. ${line}`).join('\n');
-        break;
-      default:
-        formattedText = selectedText;
+      case 'bold': formattedText = `**${selectedText}**`; break;
+      case 'italic': formattedText = `*${selectedText}*`; break;
+      case 'underline': formattedText = `<u>${selectedText}</u>`; break;
+      case 'heading1': formattedText = `\n# ${selectedText}\n`; break;
+      case 'heading2': formattedText = `\n## ${selectedText}\n`; break;
+      case 'heading3': formattedText = `\n### ${selectedText}\n`; break;
+      case 'quote': formattedText = `\n> ${selectedText}\n`; break;
+      case 'list': formattedText = selectedText.split('\n').map(line => `- ${line}`).join('\n'); break;
+      case 'olist': formattedText = selectedText.split('\n').map((line, i) => `${i+1}. ${line}`).join('\n'); break;
+      default: formattedText = selectedText;
     }
     
     const newContent = formData.content.substring(0, start) + formattedText + formData.content.substring(end);
     
-    setFormData(prev => ({
-      ...prev,
-      content: newContent
-    }));
+    setFormData(prev => ({ ...prev, content: newContent }));
     
-    // Reset focus to the textarea and set cursor position after the formatted text
+    // Reset focus to the textarea
     setTimeout(() => {
       textarea.focus();
       const newCursorPos = start + formattedText.length;
@@ -344,20 +275,20 @@ function AdminPage() {
       // Generate a unique filename
       const fileExt = file.name.split('.').pop();
       const fileName = `${Date.now()}-${Math.random().toString(36).substring(2, 15)}.${fileExt}`;
-      const filePath = `${fileName}`; // No subfolder as bucket is already blog-images
+      const filePath = `${fileName}`;
       
-      // Check file size - Supabase has a limit
-      if (file.size > 5 * 1024 * 1024) { // 5MB limit
+      // Check file size - 5MB limit
+      if (file.size > 5 * 1024 * 1024) {
         throw new Error('File size exceeds 5MB limit');
       }
 
       // Upload file to Supabase Storage
       const { error: uploadError } = await supabase.storage
-        .from('blog-images') // Using the correct bucket name
+        .from('blog-images')
         .upload(filePath, file, {
           cacheControl: '3600',
           upsert: false,
-          contentType: file.type // Explicitly set content type
+          contentType: file.type
         });
 
       if (uploadError) {
@@ -389,7 +320,7 @@ function AdminPage() {
     try {
       let imageUrl = formData.image;
       
-      // If there's a selected file for the main image, upload it first
+      // Upload main image if selected
       if (selectedFile) {
         setMessage({ text: 'Uploading main image...', type: 'info' });
         try {
@@ -401,7 +332,7 @@ function AdminPage() {
         throw new Error('Please select a main image or provide an image URL');
       }
       
-      // Upload all inline images and get their URLs
+      // Upload all inline images
       setMessage({ text: 'Uploading inline images...', type: 'info' });
       const uploadedInlineImages = [];
       
@@ -418,7 +349,6 @@ function AdminPage() {
             throw new Error(`Failed to upload inline image: ${(error as Error).message}`);
           }
         } else if (image.url) {
-          // If it's an external URL, just use that
           uploadedInlineImages.push({
             url: image.url,
             caption: image.caption,
@@ -427,7 +357,7 @@ function AdminPage() {
         }
       }
       
-      // Prepare content - remove image placeholders as they'll be stored separately
+      // Clean content - replace image placeholders
       let cleanContent = formData.content;
       inlineImages.forEach(img => {
         cleanContent = cleanContent.replace(`[IMAGE:${img.id}]`, `[INLINE_IMAGE]`);
@@ -435,7 +365,7 @@ function AdminPage() {
       
       setMessage({ text: 'Creating blog post...', type: 'info' });
       
-      // Insert the article with additional images
+      // Insert the article
       const { error } = await supabase
         .from('articles')
         .insert([
@@ -462,7 +392,7 @@ function AdminPage() {
       
       setMessage({ text: 'Blog post created successfully!', type: 'success' });
       
-      // Reset form
+      // Reset form and clean up
       setFormData({
         title: '',
         excerpt: '',
@@ -473,21 +403,19 @@ function AdminPage() {
         author: ''
       });
       setSelectedFile(null);
-      setInlineImages([]);
       
       if (previewUrl) {
         URL.revokeObjectURL(previewUrl);
         setPreviewUrl('');
       }
       
-      // Cleanup inline image preview URLs
+      // Clean up inline image previews
       inlineImages.forEach(img => {
-        if (img.previewUrl) {
-          URL.revokeObjectURL(img.previewUrl);
-        }
+        if (img.previewUrl) URL.revokeObjectURL(img.previewUrl);
       });
+      setInlineImages([]);
       
-      // Switch to manage tab to see the new post
+      // Switch to manage tab
       setTimeout(() => {
         setActiveTab('manage');
         fetchBlogs();
@@ -501,22 +429,15 @@ function AdminPage() {
     }
   };
 
-  // Cleanup preview URL when component unmounts
+  // Cleanup preview URLs when component unmounts
   useEffect(() => {
     return () => {
-      if (previewUrl) {
-        URL.revokeObjectURL(previewUrl);
-      }
-      // Clean up all inline image preview URLs
+      if (previewUrl) URL.revokeObjectURL(previewUrl);
       inlineImages.forEach(img => {
-        if (img.previewUrl) {
-          URL.revokeObjectURL(img.previewUrl);
-        }
+        if (img.previewUrl) URL.revokeObjectURL(img.previewUrl);
       });
     };
   }, [previewUrl, inlineImages]);
-
-  
 
   // Format date helper
   const formatDate = (dateString: string) => {
@@ -533,79 +454,79 @@ function AdminPage() {
   };
 
   return (
-    <div className="max-w-6xl mx-auto p-6 mt-32">
-      <h1 className="text-3xl font-serif mb-6">Admin Dashboard</h1>
+    <div className="max-w-6xl mx-auto p-8 bg-white">
+      <h1 className="text-4xl font-serif mb-8 tracking-tight">AVOURE ADMIN</h1>
       
-      {/* Tabs */}
-      <div className="flex border-b border-gray-200 mb-6">
+      {/* Tabs with more elegant styling */}
+      <div className="flex border-b border-gray-200 mb-10">
         <button
-          className={`px-4 py-2 font-medium ${
+          className={`px-6 py-3 font-medium text-sm tracking-widest uppercase ${
             activeTab === 'upload' 
               ? 'border-b-2 border-black text-black' 
-              : 'text-gray-500 hover:text-black'
+              : 'text-gray-400 hover:text-black'
           }`}
           onClick={() => setActiveTab('upload')}
         >
-          Upload New Blog
+          Create
         </button>
         <button
-          className={`px-4 py-2 font-medium ${
+          className={`px-6 py-3 font-medium text-sm tracking-widest uppercase ${
             activeTab === 'manage' 
               ? 'border-b-2 border-black text-black' 
-              : 'text-gray-500 hover:text-black'
+              : 'text-gray-400 hover:text-black'
           }`}
           onClick={() => setActiveTab('manage')}
         >
-          Manage Blogs
+          Manage
         </button>
       </div>
       
       {message.text && (
-        <div className={`p-4 mb-6 rounded-md ${
-          message.type === 'success' ? 'bg-green-100 text-green-700' : 
-          message.type === 'error' ? 'bg-red-100 text-red-700' : 
-          'bg-blue-100 text-blue-700'
+        <div className={`p-4 mb-8 ${
+          message.type === 'success' ? 'bg-green-50 text-green-700 border-l-4 border-green-500' : 
+          message.type === 'error' ? 'bg-red-50 text-red-700 border-l-4 border-red-500' : 
+          'bg-blue-50 text-blue-700 border-l-4 border-blue-500'
         }`}>
           {message.text}
         </div>
       )}
       
-      {/* Upload Blog Form */}
+      {/* Upload Blog Form with refined aesthetics */}
       {activeTab === 'upload' && (
-        <form onSubmit={handleSubmit} className="space-y-6">
+        <form onSubmit={handleSubmit} className="space-y-8">
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Title</label>
+            <label className="block text-xs font-medium text-gray-500 uppercase tracking-wide mb-2">Title</label>
             <input
               type="text"
               name="title"
               value={formData.title}
               onChange={handleChange}
-              className="w-full border border-gray-300 rounded-md px-3 py-2"
+              className="w-full border-0 border-b border-gray-200 focus:ring-0 focus:border-black px-0 py-2 text-lg"
               required
             />
           </div>
           
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Excerpt (short summary)</label>
+            <label className="block text-xs font-medium text-gray-500 uppercase tracking-wide mb-2">Excerpt</label>
             <textarea
               name="excerpt"
               value={formData.excerpt}
               onChange={handleChange}
-              className="w-full border border-gray-300 rounded-md px-3 py-2"
+              className="w-full border border-gray-200 rounded-none focus:ring-0 focus:border-black px-3 py-2"
               rows={3}
               required
             />
           </div>
           
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Content</label>
+            <label className="block text-xs font-medium text-gray-500 uppercase tracking-wide mb-2">Content</label>
             
-            {/* Text formatting toolbar */}
-            <div className="flex flex-wrap gap-2 mb-2 p-2 bg-gray-50 border border-gray-300 rounded-md">
+            {/* More sophisticated text formatting toolbar */}
+            <div className="flex flex-wrap gap-3 mb-3 p-3 bg-gray-50 border-0 border-b border-gray-200">
               <button 
                 type="button" 
                 onClick={() => applyFormatting('bold')}
-                className="px-2 py-1 bg-white border border-gray-300 rounded hover:bg-gray-100 text-sm font-bold"
+                className="w-8 h-8 flex items-center justify-center bg-white border border-gray-200 rounded-sm hover:bg-gray-100 text-sm font-bold"
                 title="Bold"
               >
                 B
@@ -613,7 +534,7 @@ function AdminPage() {
               <button 
                 type="button" 
                 onClick={() => applyFormatting('italic')}
-                className="px-2 py-1 bg-white border border-gray-300 rounded hover:bg-gray-100 text-sm italic"
+                className="w-8 h-8 flex items-center justify-center bg-white border border-gray-200 rounded-sm hover:bg-gray-100 text-sm italic"
                 title="Italic"
               >
                 I
@@ -621,16 +542,16 @@ function AdminPage() {
               <button 
                 type="button" 
                 onClick={() => applyFormatting('underline')}
-                className="px-2 py-1 bg-white border border-gray-300 rounded hover:bg-gray-100 text-sm underline"
+                className="w-8 h-8 flex items-center justify-center bg-white border border-gray-200 rounded-sm hover:bg-gray-100 text-sm underline"
                 title="Underline"
               >
                 U
               </button>
-              <div className="h-6 border-r border-gray-300 mx-1"></div>
+              <div className="h-8 border-r border-gray-200 mx-1"></div>
               <button 
                 type="button" 
                 onClick={() => applyFormatting('heading1')}
-                className="px-2 py-1 bg-white border border-gray-300 rounded hover:bg-gray-100 text-sm font-bold"
+                className="w-8 h-8 flex items-center justify-center bg-white border border-gray-200 rounded-sm hover:bg-gray-100 text-sm font-bold"
                 title="Heading 1"
               >
                 H1
@@ -638,7 +559,7 @@ function AdminPage() {
               <button 
                 type="button" 
                 onClick={() => applyFormatting('heading2')}
-                className="px-2 py-1 bg-white border border-gray-300 rounded hover:bg-gray-100 text-sm font-bold"
+                className="w-8 h-8 flex items-center justify-center bg-white border border-gray-200 rounded-sm hover:bg-gray-100 text-sm font-bold"
                 title="Heading 2"
               >
                 H2
@@ -646,16 +567,16 @@ function AdminPage() {
               <button 
                 type="button" 
                 onClick={() => applyFormatting('heading3')}
-                className="px-2 py-1 bg-white border border-gray-300 rounded hover:bg-gray-100 text-sm font-bold"
+                className="w-8 h-8 flex items-center justify-center bg-white border border-gray-200 rounded-sm hover:bg-gray-100 text-sm font-bold"
                 title="Heading 3"
               >
                 H3
               </button>
-              <div className="h-6 border-r border-gray-300 mx-1"></div>
+              <div className="h-8 border-r border-gray-200 mx-1"></div>
               <button 
                 type="button" 
                 onClick={() => applyFormatting('list')}
-                className="px-2 py-1 bg-white border border-gray-300 rounded hover:bg-gray-100 text-sm"
+                className="px-3 h-8 flex items-center justify-center bg-white border border-gray-200 rounded-sm hover:bg-gray-100 text-sm"
                 title="Bullet List"
               >
                 • List
@@ -663,7 +584,7 @@ function AdminPage() {
               <button 
                 type="button" 
                 onClick={() => applyFormatting('olist')}
-                className="px-2 py-1 bg-white border border-gray-300 rounded hover:bg-gray-100 text-sm"
+                className="px-3 h-8 flex items-center justify-center bg-white border border-gray-200 rounded-sm hover:bg-gray-100 text-sm"
                 title="Numbered List"
               >
                 1. List
@@ -671,16 +592,16 @@ function AdminPage() {
               <button 
                 type="button" 
                 onClick={() => applyFormatting('quote')}
-                className="px-2 py-1 bg-white border border-gray-300 rounded hover:bg-gray-100 text-sm"
+                className="px-3 h-8 flex items-center justify-center bg-white border border-gray-200 rounded-sm hover:bg-gray-100 text-sm"
                 title="Quote"
               >
                 " Quote
               </button>
-              <div className="h-6 border-r border-gray-300 mx-1"></div>
+              <div className="h-8 border-r border-gray-200 mx-1"></div>
               <button 
                 type="button" 
-                onClick={handleAddInlineImageClick}
-                className="px-2 py-1 bg-white border border-gray-300 rounded hover:bg-gray-100 text-sm"
+                onClick={() => inlineFileInputRef.current?.click()}
+                className="px-3 h-8 flex items-center justify-center bg-white border border-gray-200 rounded-sm hover:bg-gray-100 text-sm"
                 title="Insert Image"
               >
                 + Image
@@ -692,10 +613,10 @@ function AdminPage() {
               ref={contentEditorRef}
               value={formData.content}
               onChange={handleChange}
-              onClick={handleContentClick}
-              onKeyUp={handleContentKeyUp}
-              className="w-full border border-gray-300 rounded-md px-3 py-2"
-              rows={10}
+              onClick={(e) => setCurrentCursorPosition((e.target as HTMLTextAreaElement).selectionStart)}
+              onKeyUp={(e) => setCurrentCursorPosition((e.target as HTMLTextAreaElement).selectionStart)}
+              className="w-full border border-gray-200 rounded-none focus:ring-0 focus:border-black px-3 py-2"
+              rows={12}
               required
             />
             
@@ -708,40 +629,37 @@ function AdminPage() {
               className="hidden"
             />
             
-            {/* Inline images preview and management */}
+            {/* Inline images preview with elegant styling */}
             {inlineImages.length > 0 && (
-              <div className="mt-4 border border-gray-200 rounded-md p-4 bg-gray-50">
-                <h3 className="text-md font-medium mb-3">Inline Images</h3>
-                <div className="space-y-4">
+              <div className="mt-6 border-0 border-t border-gray-100 pt-4">
+                <h3 className="text-sm uppercase tracking-wide font-medium text-gray-500 mb-4">Inline Images</h3>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   {inlineImages.map((image) => (
-                    <div key={image.id} className="flex items-start space-x-4 p-3 border border-gray-200 rounded-md bg-white">
-                      <div className="w-20 h-20 flex-shrink-0">
+                    <div key={image.id} className="flex items-start space-x-4 p-4 bg-gray-50">
+                      <div className="w-20 h-20 flex-shrink-0 bg-gray-100">
                         <img 
                           src={image.previewUrl || image.url} 
                           alt="Preview" 
-                          className="h-full w-full object-cover rounded-md" 
+                          className="h-full w-full object-cover" 
                         />
                       </div>
                       <div className="flex-grow">
                         <div className="flex justify-between items-start">
                           <input
                             type="text"
-                            placeholder="Image caption (optional)"
+                            placeholder="Caption"
                             value={image.caption}
                             onChange={(e) => handleInlineImageCaptionChange(image.id, e.target.value)}
-                            className="flex-grow border border-gray-300 rounded-md px-2 py-1 text-sm"
+                            className="flex-grow border-0 border-b border-gray-200 focus:ring-0 focus:border-black px-0 py-1 text-sm bg-transparent"
                           />
                           <button 
                             type="button"
                             onClick={() => removeInlineImage(image.id)}
-                            className="ml-2 text-red-500 hover:text-red-700"
+                            className="ml-2 text-gray-400 hover:text-black"
                           >
                             Remove
                           </button>
                         </div>
-                        <p className="text-xs text-gray-500 mt-1">
-                          This image will appear where marker [IMAGE:{image.id}] is in your content
-                        </p>
                       </div>
                     </div>
                   ))}
@@ -750,14 +668,14 @@ function AdminPage() {
             )}
           </div>
           
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Category</label>
+              <label className="block text-xs font-medium text-gray-500 uppercase tracking-wide mb-2">Category</label>
               <select
                 name="category"
                 value={formData.category}
                 onChange={handleChange}
-                className="w-full border border-gray-300 rounded-md px-3 py-2"
+                className="w-full border-0 border-b border-gray-200 focus:ring-0 focus:border-black px-0 py-2"
               >
                 <option value="fashion">Fashion</option>
                 <option value="beauty">Beauty</option>
@@ -768,12 +686,12 @@ function AdminPage() {
             </div>
             
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Gender (if applicable)</label>
+              <label className="block text-xs font-medium text-gray-500 uppercase tracking-wide mb-2">Gender</label>
               <select
                 name="gender"
                 value={formData.gender}
                 onChange={handleChange}
-                className="w-full border border-gray-300 rounded-md px-3 py-2"
+                className="w-full border-0 border-b border-gray-200 focus:ring-0 focus:border-black px-0 py-2"
               >
                 <option value="women">Women</option>
                 <option value="men">Men</option>
@@ -783,8 +701,8 @@ function AdminPage() {
           </div>
           
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Featured Image</label>
-            <div className="space-y-3">
+            <label className="block text-xs font-medium text-gray-500 uppercase tracking-wide mb-2">Featured Image</label>
+            <div className="space-y-4">
               {/* Hidden file input */}
               <input
                 type="file"
@@ -795,13 +713,13 @@ function AdminPage() {
               />
               
               {/* Custom upload button and URL input */}
-              <div className="flex flex-col sm:flex-row gap-3">
+              <div className="flex flex-col md:flex-row gap-4">
                 <button
                   type="button"
-                  onClick={handleBrowseClick}
-                  className="bg-gray-200 text-gray-800 px-4 py-2 rounded-md hover:bg-gray-300"
+                  onClick={() => fileInputRef.current?.click()}
+                  className="bg-black text-white px-6 py-2 hover:bg-gray-800 tracking-wider uppercase text-xs"
                 >
-                  {selectedFile ? 'Change Image' : 'Browse Images'}
+                  {selectedFile ? 'Change Image' : 'Select Image'}
                 </button>
                 
                 <div className="flex-1">
@@ -811,11 +729,11 @@ function AdminPage() {
                     value={formData.image}
                     onChange={handleChange}
                     placeholder="Or paste image URL here"
-                    className="w-full border border-gray-300 rounded-md px-3 py-2"
+                    className="w-full border-0 border-b border-gray-200 focus:ring-0 focus:border-black px-0 py-2"
                   />
                   {selectedFile && (
-                    <p className="text-sm text-gray-500 mt-1">
-                      Selected file: {selectedFile.name} ({(selectedFile.size / 1024).toFixed(1)}KB)
+                    <p className="text-xs text-gray-500 mt-1">
+                      Selected: {selectedFile.name} ({(selectedFile.size / 1024).toFixed(1)}KB)
                     </p>
                   )}
                 </div>
@@ -823,12 +741,12 @@ function AdminPage() {
               
               {/* Image preview */}
               {(previewUrl || formData.image) && (
-                <div className="mt-2">
-                  <p className="text-sm text-gray-500 mb-2">Preview:</p>
+                <div className="mt-4">
+                  <p className="text-xs uppercase tracking-wide font-medium text-gray-500 mb-2">Preview</p>
                   <img 
                     src={previewUrl || formData.image} 
                     alt="Preview" 
-                    className="h-48 object-cover rounded-md border border-gray-200" 
+                    className="h-56 object-cover border border-gray-100" 
                     onError={(e) => {
                       (e.target as HTMLImageElement).src = '/placeholder-image.jpg';
                       setMessage({text: 'Warning: Unable to load image preview', type: 'error'});
@@ -840,13 +758,13 @@ function AdminPage() {
           </div>
           
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Author</label>
+            <label className="block text-xs font-medium text-gray-500 uppercase tracking-wide mb-2">Author</label>
             <input
               type="text"
               name="author"
               value={formData.author}
               onChange={handleChange}
-              className="w-full border border-gray-300 rounded-md px-3 py-2"
+              className="w-full border-0 border-b border-gray-200 focus:ring-0 focus:border-black px-0 py-2"
               required
             />
           </div>
@@ -854,122 +772,127 @@ function AdminPage() {
           <button
             type="submit"
             disabled={isLoading}
-            className="bg-black text-white px-6 py-2 rounded-md hover:bg-gray-800 disabled:bg-gray-400"
+            className="bg-black text-white px-8 py-3 uppercase tracking-wider text-sm hover:bg-gray-800 disabled:bg-gray-300 mt-6"
           >
-            {isLoading ? 'Uploading...' : 'Publish Blog Post'}
+            {isLoading ? 'Publishing...' : 'Publish Article'}
           </button>
         </form>
       )}
       
-      {/* Manage Blogs Table */}
-      {activeTab === 'manage' && (
-        <div>
-          <div className="flex justify-between items-center mb-4">
-            <h2 className="text-xl font-medium">Manage Blog Posts</h2>
-            <button 
-              onClick={fetchBlogs}
-              className="text-sm bg-gray-100 px-3 py-1 rounded hover:bg-gray-200"
-              disabled={isLoadingBlogs}
-            >
-              {isLoadingBlogs ? 'Refreshing...' : 'Refresh'}
-            </button>
-          </div>
-          
-          {isLoadingBlogs ? (
-            <div className="text-center py-8">Loading blogs...</div>
-          ) : blogs.length === 0 ? (
-            <div className="text-center py-8 text-gray-500">No blog posts found</div>
-          ) : (
-            <div className="overflow-x-auto">
-              <table className="min-w-full divide-y divide-gray-200">
-                <thead className="bg-gray-50">
-                  <tr>
-                    <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      Title
-                    </th>
-                    <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      Category
-                    </th>
-                    <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      Author
-                    </th>
-                    <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      Date
-                    </th>
-                    <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      Actions
-                    </th>
-                  </tr>
-                </thead>
-                <tbody className="bg-white divide-y divide-gray-200">
-                  {blogs.map((blog) => (
-                    <tr key={blog.id} className="hover:bg-gray-50">
-                      <td className="px-6 py-4 whitespace-nowrap">
-                        <div className="flex items-center">
-                          <div className="h-10 w-10 flex-shrink-0">
-                            <img 
-                              className="h-10 w-10 rounded-full object-cover" 
-                              src={blog.image || '/placeholder-image.jpg'} 
-                              alt="" 
-                              onError={(e) => {
-                                (e.target as HTMLImageElement).src = '/placeholder-image.jpg';
-                              }}
-                            />
-                          </div>
-                          <div className="ml-4">
-                            <div className="text-sm font-medium text-gray-900">{blog.title}</div>
-                            <div className="text-xs text-gray-500">
-                              {blog.additionalImages && blog.additionalImages.length > 0 ? (
-                                <span className="text-xs text-green-600">
-                                  {blog.additionalImages.length} additional {blog.additionalImages.length === 1 ? 'image' : 'images'}
-                                </span>
-                              ) : null}
-                            </div>
-                          </div>
-                        </div>
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap">
-                        <span className="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-gray-100 text-gray-800">
-                          {blog.category} {blog.gender ? `• ${blog.gender}` : ''}
-                        </span>
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                        {blog.author}
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                        {formatDate(blog.date)}
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
-                        <div className="flex space-x-2">
-                          <button
-                            onClick={() => navigate(`/blogs/${blog.id}`)}
-                            className="text-indigo-600 hover:text-indigo-900"
-                          >
-                            View
-                          </button>
-                          <button
-                            onClick={() => navigate(`/admin/edit/${blog.id}`)}
-                            className="text-blue-600 hover:text-blue-900"
-                          >
-                            Edit
-                          </button>
-                          <button
-                            onClick={() => handleDeleteBlog(blog.id)}
-                            disabled={deleteInProgress === blog.id}
-                            className="text-red-600 hover:text-red-900 disabled:text-gray-400"
-                          >
-                            {deleteInProgress === blog.id ? 'Deleting...' : 'Delete'}
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
+      {/* Manage Blogs Table with elegant styling */}
+{activeTab === 'manage' && (
+  <div>
+    {isLoadingBlogs ? (
+      <div className="text-center py-20">
+        <div className="inline-block mx-auto w-8 h-8 border-2 border-black border-t-transparent rounded-full animate-spin"></div>
+        <p className="mt-3 text-gray-500 uppercase tracking-wide text-xs">Loading articles...</p>
+      </div>
+    ) : blogs.length === 0 ? (
+      <div className="text-center py-20 border border-gray-100 bg-gray-50">
+        <p className="text-2xl font-serif mb-3">No articles yet</p>
+        <p className="text-gray-500 mb-6">Create your first article to see it here</p>
+        <button 
+          onClick={() => setActiveTab('upload')}
+          className="px-6 py-2 bg-black text-white uppercase tracking-wider text-xs"
+        >
+          Create Article
+        </button>
+      </div>
+    ) : (
+      <>
+        <div className="mb-6 flex justify-between items-center">
+          <h2 className="text-2xl font-serif">Published Articles</h2>
+          <button 
+            onClick={() => setActiveTab('upload')}
+            className="px-6 py-2 bg-black text-white uppercase tracking-wider text-xs"
+          >
+            New Article
+          </button>
         </div>
-      )}
+        
+        <div className="overflow-x-auto">
+          <table className="w-full border-collapse">
+            <thead>
+              <tr className="border-b-2 border-black">
+                <th className="py-4 text-left font-serif font-normal text-sm uppercase tracking-wider">Image</th>
+                <th className="py-4 text-left font-serif font-normal text-sm uppercase tracking-wider">Title</th>
+                <th className="py-4 text-left font-serif font-normal text-sm uppercase tracking-wider">Category</th>
+                <th className="py-4 text-left font-serif font-normal text-sm uppercase tracking-wider">Date</th>
+                <th className="py-4 text-left font-serif font-normal text-sm uppercase tracking-wider">Views</th>
+                <th className="py-4 text-left font-serif font-normal text-sm uppercase tracking-wider">Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {blogs.map((blog) => (
+                <tr key={blog.id} className="border-b border-gray-100 hover:bg-gray-50 transition-colors">
+                  <td className="py-5">
+                    <div className="w-16 h-16 bg-gray-100">
+                      <img 
+                        src={blog.image || '/placeholder-image.jpg'} 
+                        alt={blog.title} 
+                        className="w-full h-full object-cover"
+                        onError={(e) => {
+                          (e.target as HTMLImageElement).src = '/placeholder-image.jpg';
+                        }}
+                      />
+                    </div>
+                  </td>
+                  <td className="py-5 font-serif">
+                    <div className="line-clamp-2 pr-6">{blog.title}</div>
+                    <div className="text-xs text-gray-500 mt-1">By {blog.author}</div>
+                  </td>
+                  <td className="py-5">
+                    <span className="uppercase text-xs tracking-wider px-2 py-1 bg-gray-100">
+                      {blog.category}
+                    </span>
+                    {blog.gender && (
+                      <span className="uppercase text-xs tracking-wider px-2 py-1 bg-gray-100 ml-2">
+                        {blog.gender}
+                      </span>
+                    )}
+                  </td>
+                  <td className="py-5 text-sm">{formatDate(blog.date)}</td>
+                  <td className="py-5 text-sm">{blog.views.toLocaleString()}</td>
+                  <td className="py-5">
+                    <div className="flex items-center space-x-3">
+                      <button
+                        onClick={() => navigate(`/blog/${blog.id}`)}
+                        className="text-gray-500 hover:text-black transition-colors"
+                        title="View"
+                      >
+                        View
+                      </button>
+                      <button
+                        onClick={() => navigate(`/admin/edit/${blog.id}`)}
+                        className="text-gray-500 hover:text-black transition-colors"
+                        title="Edit"
+                      >
+                        Edit
+                      </button>
+                      <button
+                        onClick={() => handleDeleteBlog(blog.id)}
+                        className="text-gray-500 hover:text-red-600 transition-colors"
+                        title="Delete"
+                        disabled={deleteInProgress === blog.id}
+                      >
+                        {deleteInProgress === blog.id ? (
+                          <span className="inline-block w-4 h-4 border-2 border-gray-300 border-t-black rounded-full animate-spin"></span>
+                        ) : (
+                          'Delete'
+                        )}
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </>
+    )}
+  </div>
+)}
+
     </div>
   );
 }

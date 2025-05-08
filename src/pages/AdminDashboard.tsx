@@ -1,977 +1,597 @@
-
-import { useState, useRef, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import { supabase } from '../lib/supabase';
-import { useNavigate } from 'react-router-dom';
+import { Link } from "react-router-dom";
 
-// Define the Article type for TypeScript
-interface Article {
-  id: number;
-  title: string;
-  excerpt: string;
-  content: string;
-  category: string;
-  gender: string;
-  image: string;
-  author: string;
-  date: string;
-  likes: number;
-  comments: number;
-  views: number;
-  additionalImages?: {url: string, caption: string, position: number}[];
-}
-
-// Interface for inline images
-interface InlineImage {
-  id: string;
-  file: File | null;
-  url: string;
-  previewUrl: string;
-  caption: string;
-  position: number; // Cursor position in the content where image should appear
-}
-
-function AdminPage() {
-  const navigate = useNavigate();
-  const [activeTab, setActiveTab] = useState<'upload' | 'manage'>('upload');
-  const [isLoading, setIsLoading] = useState(false);
-  const fileInputRef = useRef<HTMLInputElement>(null);
-  const inlineFileInputRef = useRef<HTMLInputElement>(null);
-  const contentEditorRef = useRef<HTMLTextAreaElement>(null);
-  const [selectedFile, setSelectedFile] = useState<File | null>(null);
-  const [previewUrl, setPreviewUrl] = useState<string>('');
-  const [formData, setFormData] = useState({
-    title: '',
-    excerpt: '',
-    content: '',
-    category: 'fashion',
-    gender: 'women',
-    image: '',
-    author: ''
+function AvoureAdminDashboard() {
+  const [activeSection, setActiveSection] = useState('overview');
+  const [stats, setStats] = useState({
+    totalBlogs: 0,
+    pendingApprovals: 0,
+    publishedToday: 0,
+    totalViews: 0
   });
-  const [message, setMessage] = useState({ text: '', type: '' });
-  
-  // State for managing inline images
-  const [inlineImages, setInlineImages] = useState<InlineImage[]>([]);
-  const [currentCursorPosition, setCurrentCursorPosition] = useState<number>(0);
-  
-  // State for managing blogs
-  const [blogs, setBlogs] = useState<Article[]>([]);
-  const [isLoadingBlogs, setIsLoadingBlogs] = useState(false);
-  const [deleteInProgress, setDeleteInProgress] = useState<number | null>(null);
-  
-  // Load blogs when the manage tab is active
+  const [pendingBlogs, setPendingBlogs] = useState<{ id: any; title: any; excerpt: any; author: any; date: any; category: any; status: any; }[]>([]);
+  const [recentBlogs, setRecentBlogs] = useState<{ id: any; title: any; excerpt: any; author: any; date: any; category: any; views: any; status: any; }[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [analyticsData, setAnalyticsData] = useState<{
+    viewsByDay: { date: string; views: number }[];
+    topCategories: { name: string; count: number }[];
+    topAuthors: { name: string; views: number }[];
+  }>({
+    viewsByDay: [],
+    topCategories: [],
+    topAuthors: []
+  });
+  const [filterCategory, setFilterCategory] = useState('all');
+
+  // Fetch dashboard data
   useEffect(() => {
-    if (activeTab === 'manage') {
-      fetchBlogs();
-    }
-  }, [activeTab]);
-  
-  // Fetch blogs from Supabase
-  const fetchBlogs = async () => {
-    setIsLoadingBlogs(true);
-    try {
-      const { data, error } = await supabase
-        .from('articles')
-        .select('*')
-        .order('date', { ascending: false });
-        
-      if (error) {
-        throw error;
-      }
-      
-      setBlogs(data || []);
-    } catch (error) {
-      console.error('Error fetching blogs:', error);
-      setMessage({ 
-        text: `Failed to load blogs: ${(error as Error).message}`, 
-        type: 'error' 
-      });
-    } finally {
-      setIsLoadingBlogs(false);
-    }
-  };
-  
-  // Delete a blog post
-  const handleDeleteBlog = async (id: number) => {
-    if (window.confirm('Are you sure you want to delete this blog post? This action cannot be undone.')) {
-      setDeleteInProgress(id);
+    const fetchDashboardData = async () => {
+      setIsLoading(true);
       try {
-        // First, get the image URL to delete from storage
-        const { data: blogData } = await supabase
+        // Get counts and stats
+        const { data: articles, error: articlesError } = await supabase
           .from('articles')
-          .select('image, additionalImages')
-          .eq('id', id)
-          .single();
+          .select('id, views, date, status');
           
-        // Delete from the database
-        const { error: deleteError } = await supabase
+        if (articlesError) throw articlesError;
+        
+        const now = new Date();
+        const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()).toISOString();
+        
+        const totalBlogs = articles.length;
+        const pendingApprovals = articles.filter(article => article.status === 'pending').length;
+        const publishedToday = articles.filter(article => 
+          article.status === 'published' && new Date(article.date) >= new Date(todayStart)
+        ).length;
+        const totalViews = articles.reduce((sum, article) => sum + (article.views || 0), 0);
+
+        console.log('Total blogs:', totalBlogs);
+        console.log('Pending approval:', pendingBlogs);
+        console.log('Published today:', publishedToday);
+        console.log('Total views:', totalViews);
+
+        
+        setStats({
+          totalBlogs,
+          pendingApprovals,
+          publishedToday,
+          totalViews
+        });
+        
+        // Fetch pending approval blogs
+        const { data: pendingData, error: pendingError } = await supabase
           .from('articles')
-          .delete()
-          .eq('id', id);
+          .select('id, title, excerpt, author, date, category, status')
+          .eq('status', 'pending')
+          .order('date', { ascending: false })
+          .limit(5);
           
-        if (deleteError) throw deleteError;
+        if (pendingError) throw pendingError;
+        setPendingBlogs(pendingData || []);
         
-        // If the image is from Supabase storage, try to delete it too
-        if (blogData && blogData.image && blogData.image.includes('blog-images')) {
-          try {
-            // Extract the filename from the URL
-            // This assumes the URL format ends with /storage/v1/object/public/blog-images/filename.ext
-            const urlParts = blogData.image.split('/');
-            const fileName = urlParts[urlParts.length - 1];
-            
-            if (fileName) {
-              const { error: storageError } = await supabase.storage
-                .from('blog-images')
-                .remove([fileName]);
-                
-              if (storageError) {
-                console.warn('Could not delete main image from storage:', storageError);
-              }
-            }
-          } catch (imageError) {
-            console.warn('Error trying to delete main image:', imageError);
-            // Continue even if image deletion fails
-          }
-        }
+        // Fetch recent blogs
+        const { data: recentData, error: recentError } = await supabase
+          .from('articles')
+          .select('id, title, excerpt, author, date, category, views, status')
+          .order('date', { ascending: false })
+          .limit(10);
+          
+        if (recentError) throw recentError;
+        setRecentBlogs(recentData || []);
         
-        // Delete additional images if they exist
-        if (blogData && blogData.additionalImages && blogData.additionalImages.length > 0) {
-          for (const imageData of blogData.additionalImages) {
-            if (imageData.url && imageData.url.includes('blog-images')) {
-              try {
-                const urlParts = imageData.url.split('/');
-                const fileName = urlParts[urlParts.length - 1];
-                
-                if (fileName) {
-                  const { error: storageError } = await supabase.storage
-                    .from('blog-images')
-                    .remove([fileName]);
-                    
-                  if (storageError) {
-                    console.warn(`Could not delete additional image ${fileName} from storage:`, storageError);
-                  }
-                }
-              } catch (imageError) {
-                console.warn('Error trying to delete additional image:', imageError);
-              }
-            }
-          }
-        }
-        
-        // Update the UI by removing the deleted blog
-        setBlogs(blogs.filter(blog => blog.id !== id));
-        setMessage({ text: 'Blog post deleted successfully', type: 'success' });
+        // Fetch analytics data
+        await fetchAnalyticsData();
         
       } catch (error) {
-        console.error('Error deleting blog:', error);
-        setMessage({ 
-          text: `Failed to delete blog: ${(error as Error).message}`, 
-          type: 'error' 
-        });
+        console.error('Error fetching dashboard data:', error);
       } finally {
-        setDeleteInProgress(null);
+        setIsLoading(false);
       }
-    }
-  };
-
-  const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) => {
-    const { name, value } = e.target;
-    setFormData(prev => ({ ...prev, [name]: value }));
-  };
-
-  // Track cursor position in content area
-  const handleContentCursorChange = (e: React.MouseEvent<HTMLTextAreaElement> | React.KeyboardEvent<HTMLTextAreaElement>) => {
-    const textarea = e.target as HTMLTextAreaElement;
-    setCurrentCursorPosition(textarea.selectionStart);
-  };
-
-  const handleContentClick = (e: React.MouseEvent<HTMLTextAreaElement>) => {
-    handleContentCursorChange(e);
-  };
-
-  const handleContentKeyUp = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    handleContentCursorChange(e);
-  };
-
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (e.target.files && e.target.files[0]) {
-      const file = e.target.files[0];
-      setSelectedFile(file);
-      
-      // Clean up previous preview URL to avoid memory leaks
-      if (previewUrl) {
-        URL.revokeObjectURL(previewUrl);
+    };
+    
+    fetchDashboardData();
+  }, []);
+  
+  const fetchAnalyticsData = async () => {
+    try {
+      // Get views by day for the last 7 days
+      const dates = [];
+      const today = new Date();
+      for (let i = 6; i >= 0; i--) {
+        const date = new Date(today);
+        date.setDate(date.getDate() - i);
+        dates.push(date.toISOString().split('T')[0]);
       }
       
-      // Create a preview URL
-      const objectUrl = URL.createObjectURL(file);
-      setPreviewUrl(objectUrl);
-      
-      // Clear any manually entered image URL
-      setFormData(prev => ({ ...prev, image: '' }));
-    }
-  };
-
-  const handleInlineFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (e.target.files && e.target.files[0]) {
-      const file = e.target.files[0];
-      
-      // Create a unique ID for this inline image
-      const imageId = `inline-image-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
-      
-      // Create a preview URL
-      const objectUrl = URL.createObjectURL(file);
-      
-      // Add to inline images array with the current cursor position
-      const newImage: InlineImage = {
-        id: imageId,
-        file: file,
-        url: '',
-        previewUrl: objectUrl,
-        caption: '',
-        position: currentCursorPosition
-      };
-      
-      setInlineImages(prev => [...prev, newImage]);
-      
-      // Insert a placeholder marker in the content at cursor position
-      const content = formData.content;
-      const beforeCursor = content.substring(0, currentCursorPosition);
-      const afterCursor = content.substring(currentCursorPosition);
-      const newContent = `${beforeCursor}\n[IMAGE:${imageId}]\n${afterCursor}`;
-      
-      setFormData(prev => ({
-        ...prev,
-        content: newContent
+      // Simulate views data (in a real app, you'd query analytics_events)
+      const viewsByDay = dates.map(date => ({
+        date,
+        views: Math.floor(Math.random() * 500) + 100 // Sample data
       }));
-    }
-  };
-
-  const handleInlineImageCaptionChange = (id: string, caption: string) => {
-    setInlineImages(prev => 
-      prev.map(img => 
-        img.id === id ? { ...img, caption } : img
-      )
-    );
-  };
-
-  const removeInlineImage = (id: string) => {
-    // Remove the image from the inline images array
-    setInlineImages(prev => prev.filter(img => img.id !== id));
-    
-    // Remove the placeholder from the content
-    const newContent = formData.content.replace(`[IMAGE:${id}]`, '');
-    setFormData(prev => ({
-      ...prev,
-      content: newContent
-    }));
-    
-    // Clean up the preview URL
-    const imageToRemove = inlineImages.find(img => img.id === id);
-    if (imageToRemove && imageToRemove.previewUrl) {
-      URL.revokeObjectURL(imageToRemove.previewUrl);
-    }
-  };
-
-  const handleBrowseClick = () => {
-    fileInputRef.current?.click();
-  };
-
-  const handleAddInlineImageClick = () => {
-    inlineFileInputRef.current?.click();
-  };
-
-  // Text formatting functions
-  const applyFormatting = (format: string) => {
-    if (!contentEditorRef.current) return;
-    
-    const textarea = contentEditorRef.current;
-    const start = textarea.selectionStart;
-    const end = textarea.selectionEnd;
-    const selectedText = formData.content.substring(start, end);
-    
-    let formattedText = '';
-    
-    switch (format) {
-      case 'bold':
-        formattedText = `**${selectedText}**`;
-        break;
-      case 'italic':
-        formattedText = `*${selectedText}*`;
-        break;
-      case 'underline':
-        formattedText = `<u>${selectedText}</u>`;
-        break;
-      case 'heading1':
-        formattedText = `\n# ${selectedText}\n`;
-        break;
-      case 'heading2':
-        formattedText = `\n## ${selectedText}\n`;
-        break;
-      case 'heading3':
-        formattedText = `\n### ${selectedText}\n`;
-        break;
-      case 'quote':
-        formattedText = `\n> ${selectedText}\n`;
-        break;
-      case 'list':
-        formattedText = selectedText.split('\n').map(line => `- ${line}`).join('\n');
-        break;
-      case 'olist':
-        formattedText = selectedText.split('\n').map((line, i) => `${i+1}. ${line}`).join('\n');
-        break;
-      default:
-        formattedText = selectedText;
-    }
-    
-    const newContent = formData.content.substring(0, start) + formattedText + formData.content.substring(end);
-    
-    setFormData(prev => ({
-      ...prev,
-      content: newContent
-    }));
-    
-    // Reset focus to the textarea and set cursor position after the formatted text
-    setTimeout(() => {
-      textarea.focus();
-      const newCursorPos = start + formattedText.length;
-      textarea.setSelectionRange(newCursorPos, newCursorPos);
-    }, 0);
-  };
-
-  const uploadImageToStorage = async (file: File) => {
-    try {
-      // Generate a unique filename
-      const fileExt = file.name.split('.').pop();
-      const fileName = `${Date.now()}-${Math.random().toString(36).substring(2, 15)}.${fileExt}`;
-      const filePath = `${fileName}`; // No subfolder as bucket is already blog-images
       
-      // Check file size - Supabase has a limit
-      if (file.size > 5 * 1024 * 1024) { // 5MB limit
-        throw new Error('File size exceeds 5MB limit');
-      }
-
-      // Upload file to Supabase Storage
-      const { error: uploadError } = await supabase.storage
-        .from('blog-images') // Using the correct bucket name
-        .upload(filePath, file, {
-          cacheControl: '3600',
-          upsert: false,
-          contentType: file.type // Explicitly set content type
-        });
-
-      if (uploadError) {
-        console.error('Upload error details:', uploadError);
-        throw new Error(`Upload failed: ${uploadError.message}`);
-      }
-
-      // Get public URL
-      const { data } = supabase.storage
-        .from('blog-images')
-        .getPublicUrl(filePath);
-      
-      if (!data || !data.publicUrl) {
-        throw new Error('Failed to get public URL for uploaded file');
-      }
-      
-      return data.publicUrl;
-    } catch (error) {
-      console.error('Error in uploadImageToStorage:', error);
-      throw error;
-    }
-  };
-
-  const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
-    e.preventDefault();
-    setIsLoading(true);
-    setMessage({ text: '', type: '' });
-    
-    try {
-      let imageUrl = formData.image;
-      
-      // If there's a selected file for the main image, upload it first
-      if (selectedFile) {
-        setMessage({ text: 'Uploading main image...', type: 'info' });
-        try {
-          imageUrl = await uploadImageToStorage(selectedFile);
-        } catch (error) {
-          throw new Error(`Main image upload failed: ${(error as Error).message}`);
-        }
-      } else if (!imageUrl) {
-        throw new Error('Please select a main image or provide an image URL');
-      }
-      
-      // Upload all inline images and get their URLs
-      setMessage({ text: 'Uploading inline images...', type: 'info' });
-      const uploadedInlineImages = [];
-      
-      for (const image of inlineImages) {
-        if (image.file) {
-          try {
-            const uploadedUrl = await uploadImageToStorage(image.file);
-            uploadedInlineImages.push({
-              url: uploadedUrl,
-              caption: image.caption,
-              position: image.position
-            });
-          } catch (error) {
-            throw new Error(`Failed to upload inline image: ${(error as Error).message}`);
+      // Top categories
+      const { data: categoryData } = await supabase
+        .from('articles')
+        .select('category, id');
+        
+      const categoryCount: Record<string, number> = {};
+      if (categoryData) {
+        categoryData.forEach(article => {
+          if (article.category) {
+            categoryCount[article.category] = (categoryCount[article.category] || 0) + 1;
           }
-        } else if (image.url) {
-          // If it's an external URL, just use that
-          uploadedInlineImages.push({
-            url: image.url,
-            caption: image.caption,
-            position: image.position
-          });
-        }
+        });
       }
       
-      // Prepare content - remove image placeholders as they'll be stored separately
-      let cleanContent = formData.content;
-      inlineImages.forEach(img => {
-        cleanContent = cleanContent.replace(`[IMAGE:${img.id}]`, `[INLINE_IMAGE]`);
+      const topCategories = Object.entries(categoryCount)
+        .map(([name, count]) => ({ name, count: count as number }))
+        .sort((a, b) => b.count - a.count)
+        .slice(0, 5);
+      
+      // Top authors
+      const { data: authorData } = await supabase
+        .from('articles')
+        .select('author, views');
+        
+      const authorViews: Record<string, number> = {};
+      authorData?.forEach(article => {
+        if (article.author) {
+          authorViews[article.author] = (authorViews[article.author] || 0) + (article.views || 0);
+        }
       });
       
-      setMessage({ text: 'Creating blog post...', type: 'info' });
+      const topAuthors = Object.entries(authorViews)
+        .map(([name, views]) => ({ name, views: views as number }))
+        .sort((a, b) => b.views - a.views)
+        .slice(0, 5);
       
-      // Insert the article with additional images
+      setAnalyticsData({
+        viewsByDay,
+        topCategories,
+        topAuthors
+      });
+    } catch (error) {
+      console.error('Error fetching analytics data:', error);
+    }
+  };
+  
+  const handleApprove = async (id: number | string) => {
+    try {
       const { error } = await supabase
         .from('articles')
-        .insert([
-          {
-            title: formData.title,
-            excerpt: formData.excerpt,
-            content: cleanContent,
-            category: formData.category,
-            gender: formData.gender,
-            image: imageUrl,
-            author: formData.author,
-            date: new Date().toISOString(),
-            likes: 0,
-            comments: 0,
-            views: 0,
-            additionalImages: uploadedInlineImages
-          }
-        ]);
-
-      if (error) {
-        console.error('Supabase insertion error:', error);
-        throw new Error(`Database error: ${error.message}`);
-      }
+        .update({ status: 'published', date: new Date().toISOString() })
+        .eq('id', id);
+        
+      if (error) throw error;
       
-      setMessage({ text: 'Blog post created successfully!', type: 'success' });
-      
-      // Reset form
-      setFormData({
-        title: '',
-        excerpt: '',
-        content: '',
-        category: 'fashion',
-        gender: 'women',
-        image: '',
-        author: ''
-      });
-      setSelectedFile(null);
-      setInlineImages([]);
-      
-      if (previewUrl) {
-        URL.revokeObjectURL(previewUrl);
-        setPreviewUrl('');
-      }
-      
-      // Cleanup inline image preview URLs
-      inlineImages.forEach(img => {
-        if (img.previewUrl) {
-          URL.revokeObjectURL(img.previewUrl);
-        }
-      });
-      
-      // Switch to manage tab to see the new post
-      setTimeout(() => {
-        setActiveTab('manage');
-        fetchBlogs();
-      }, 1500);
+      // Update UI
+      setPendingBlogs(pendingBlogs.filter(blog => blog.id !== id));
+      setStats(prev => ({
+        ...prev,
+        pendingApprovals: prev.pendingApprovals - 1,
+        publishedToday: prev.publishedToday + 1
+      }));
       
     } catch (error) {
-      console.error('Error uploading blog:', error);
-      setMessage({ text: `Error: ${(error as Error).message}`, type: 'error' });
-    } finally {
-      setIsLoading(false);
+      console.error('Error approving blog:', error);
     }
   };
-
-  // Cleanup preview URL when component unmounts
-  useEffect(() => {
-    return () => {
-      if (previewUrl) {
-        URL.revokeObjectURL(previewUrl);
-      }
-      // Clean up all inline image preview URLs
-      inlineImages.forEach(img => {
-        if (img.previewUrl) {
-          URL.revokeObjectURL(img.previewUrl);
-        }
-      });
-    };
-  }, [previewUrl, inlineImages]);
-
   
-
-  // Format date helper
-  const formatDate = (dateString: string) => {
+  const handleReject = async (id: number | string) => {
     try {
-      const date = new Date(dateString);
-      return date.toLocaleDateString('en-US', {
-        year: 'numeric',
-        month: 'short',
-        day: 'numeric',
-      });
+      const { error } = await supabase
+        .from('articles')
+        .update({ status: 'rejected' })
+        .eq('id', id);
+        
+      if (error) throw error;
+      
+      // Update UI
+      setPendingBlogs(pendingBlogs.filter(blog => blog.id !== id));
+      setStats(prev => ({
+        ...prev,
+        pendingApprovals: prev.pendingApprovals - 1
+      }));
+      
     } catch (error) {
-      return dateString;
+      console.error('Error rejecting blog:', error);
     }
   };
+  
+  const formatDate = (dateString: string) => {
+    const options = { year: 'numeric' as const, month: 'short' as const, day: 'numeric' as const };
+    return new Date(dateString).toLocaleDateString('en-US', options);
+  };
+  
+  // Filter blogs by category
+  const filteredRecentBlogs = filterCategory === 'all' 
+    ? recentBlogs 
+    : recentBlogs.filter(blog => blog.category === filterCategory);
+  
+  // Get unique categories for filter
+  const categories = ['all', ...new Set(recentBlogs.map(blog => blog.category).filter(Boolean))];
 
   return (
-    <div className="max-w-6xl mx-auto p-6 mt-10">
-      <h1 className="text-3xl font-serif mb-6">Admin Dashboard</h1>
-      
-      {/* Tabs */}
-      <div className="flex border-b border-gray-200 mb-6">
-        <button
-          className={`px-4 py-2 font-medium ${
-            activeTab === 'upload'
-              ? 'border-b-2 border-black text-black'
-              : 'text-gray-500 hover:text-black'
-          }`}
-          onClick={() => setActiveTab('upload')}
-        >
-          Upload New Blog
-        </button>
-        <button
-          className={`px-4 py-2 font-medium ${
-            activeTab === 'manage'
-              ? 'border-b-2 border-black text-black'
-              : 'text-gray-500 hover:text-black'
-          }`}
-          onClick={() => setActiveTab('manage')}
-        >
-          Manage Blogs
-        </button>
-      </div>
-      
-      {message.text && (
-        <div className={`p-4 mb-6 rounded-md ${
-          message.type === 'success' ? 'bg-green-100 text-green-700' :
-          message.type === 'error' ? 'bg-red-100 text-red-700' :
-          'bg-blue-100 text-blue-700'
-        }`}>
-          {message.text}
-        </div>
-      )}
-      
-      {/* Upload Blog Form */}
-      {activeTab === 'upload' && (
-        <form onSubmit={handleSubmit} className="space-y-6">
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Title</label>
-            <input
-              type="text"
-              name="title"
-              value={formData.title}
-              onChange={handleChange}
-              className="w-full border border-gray-300 rounded-md px-3 py-2"
-              required
-            />
-          </div>
-          
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Excerpt (short summary)</label>
-            <textarea
-              name="excerpt"
-              value={formData.excerpt}
-              onChange={handleChange}
-              className="w-full border border-gray-300 rounded-md px-3 py-2"
-              rows={3}
-              required
-            />
-          </div>
-          
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Content</label>
-            
-            {/* Text formatting toolbar */}
-            <div className="flex flex-wrap gap-2 mb-2 p-2 bg-gray-50 border border-gray-300 rounded-md">
-              <button 
-                type="button" 
-                onClick={() => applyFormatting('bold')}
-                className="px-2 py-1 bg-white border border-gray-300 rounded hover:bg-gray-100 text-sm font-bold"
-                title="Bold"
-              >
-                B
-              </button>
-              <button 
-                type="button" 
-                onClick={() => applyFormatting('italic')}
-                className="px-2 py-1 bg-white border border-gray-300 rounded hover:bg-gray-100 text-sm italic"
-                title="Italic"
-              >
-                I
-              </button>
-              <button 
-                type="button" 
-                onClick={() => applyFormatting('underline')}
-                className="px-2 py-1 bg-white border border-gray-300 rounded hover:bg-gray-100 text-sm underline"
-                title="Underline"
-              >
-                U
-              </button>
-              <div className="h-6 border-r border-gray-300 mx-1"></div>
-              <button 
-                type="button" 
-                onClick={() => applyFormatting('heading1')}
-                className="px-2 py-1 bg-white border border-gray-300 rounded hover:bg-gray-100 text-sm font-bold"
-                title="Heading 1"
-              >
-                H1
-              </button>
-              <button 
-                type="button" 
-                onClick={() => applyFormatting('heading2')}
-                className="px-2 py-1 bg-white border border-gray-300 rounded hover:bg-gray-100 text-sm font-bold"
-                title="Heading 2"
-              >
-                H2
-              </button>
-              <button 
-                type="button" 
-                onClick={() => applyFormatting('heading3')}
-                className="px-2 py-1 bg-white border border-gray-300 rounded hover:bg-gray-100 text-sm font-bold"
-                title="Heading 3"
-              >
-                H3
-              </button>
-              <div className="h-6 border-r border-gray-300 mx-1"></div>
-              <button 
-                type="button" 
-                onClick={() => applyFormatting('list')}
-                className="px-2 py-1 bg-white border border-gray-300 rounded hover:bg-gray-100 text-sm"
-                title="Bullet List"
-              >
-                • List
-              </button>
-              <button 
-                type="button" 
-                onClick={() => applyFormatting('olist')}
-                className="px-2 py-1 bg-white border border-gray-300 rounded hover:bg-gray-100 text-sm"
-                title="Numbered List"
-              >
-                1. List
-              </button>
-              <button 
-                type="button" 
-                onClick={() => applyFormatting('quote')}
-                className="px-2 py-1 bg-white border border-gray-300 rounded hover:bg-gray-100 text-sm"
-                title="Quote"
-              >
-                " Quote
-              </button>
-              <div className="h-6 border-r border-gray-300 mx-1"></div>
-              <button 
-                type="button" 
-                onClick={handleAddInlineImageClick}
-                className="px-2 py-1 bg-white border border-gray-300 rounded hover:bg-gray-100 text-sm"
-                title="Insert Image"
-              >
-                + Image
-              </button>
+    <div className="min-h-screen bg-gray-50">
+      {/* Top navigation */}
+      <nav className="bg-black text-white">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+          <div className="flex justify-between h-16">
+            <div className="flex items-center">
+              <div className="font-serif text-2xl tracking-wider">AVOURE</div>
+              <div className="ml-2 text-xs tracking-widest uppercase">Admin</div>
             </div>
-            
-            <textarea
-              name="content"
-              ref={contentEditorRef}
-              value={formData.content}
-              onChange={handleChange}
-              onClick={handleContentClick}
-              onKeyUp={handleContentKeyUp}
-              className="w-full border border-gray-300 rounded-md px-3 py-2"
-              rows={10}
-              required
-            />
-            
-            {/* Hidden file input for inline images */}
-            <input
-              type="file"
-              ref={inlineFileInputRef}
-              onChange={handleInlineFileChange}
-              accept="image/*"
-              className="hidden"
-            />
-            
-            {/* Inline images preview and management */}
-            {inlineImages.length > 0 && (
-              <div className="mt-4 border border-gray-200 rounded-md p-4 bg-gray-50">
-                <h3 className="text-md font-medium mb-3">Inline Images</h3>
-                <div className="space-y-4">
-                  {inlineImages.map((image) => (
-                    <div key={image.id} className="flex items-start space-x-4 p-3 border border-gray-200 rounded-md bg-white">
-                      <div className="w-20 h-20 flex-shrink-0">
-                        <img 
-                          src={image.previewUrl || image.url} 
-                          alt="Preview" 
-                          className="h-full w-full object-cover rounded-md" 
-                        />
-                      </div>
-                      <div className="flex-grow">
-                        <div className="flex justify-between items-start">
-                          <input
-                            type="text"
-                            placeholder="Image caption (optional)"
-                            value={image.caption}
-                            onChange={(e) => handleInlineImageCaptionChange(image.id, e.target.value)}
-                            className="flex-grow border border-gray-300 rounded-md px-2 py-1 text-sm"
-                          />
-                          <button 
-                            type="button"
-                            onClick={() => removeInlineImage(image.id)}
-                            className="ml-2 text-red-500 hover:text-red-700"
-                          >
-                            Remove
-                          </button>
-                        </div>
-                        <p className="text-xs text-gray-500 mt-1">
-                          This image will appear where marker [IMAGE:{image.id}] is in your content
-                        </p>
-                      </div>
-                    </div>
-                  ))}
+            <div className="flex items-center space-x-4">
+              <button className="text-sm hover:underline">Settings</button>
+              <button className="text-sm hover:underline">Profile</button>
+              <button className="text-sm hover:underline">Logout</button>
+            </div>
+          </div>
+        </div>
+      </nav>
+      
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 pt-19">
+        {/* Dashboard header */}
+        <div className="mb-8 mt-32">
+          <h1 className="text-3xl font-serif font-light tracking-wide mt-38">Dashboard</h1>
+          <p className="text-gray-500">Welcome back, manage your fashion blog with style</p>
+        </div>
+        
+        {/* Main actions */}
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-8">
+        <Link to="/admin/upload" className="bg-white p-6 shadow-sm rounded-md border-l-4 border-black hover:shadow-md transition-shadow group">
+  <div className="flex justify-between items-center">
+    <div>
+      <h3 className="font-serif text-xl mb-1">Upload New Blog</h3>
+      <p className="text-gray-500 text-sm">Create and publish new content</p>
+    </div>
+    <div className="bg-gray-100 p-3 rounded-full group-hover:bg-black group-hover:text-white transition-colors">
+      <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+                </svg>
+              </div>
+            </div>
+          </Link>
+          
+          <a 
+            href="/admin/moderate" 
+            className="bg-white p-6 shadow-sm rounded-md border-l-4 border-blue-500 hover:shadow-md transition-shadow group"
+          >
+            <div className="flex justify-between items-center">
+              <div>
+                <h3 className="font-serif text-xl mb-1">Moderate Content</h3>
+                <p className="text-gray-500 text-sm">Review and approve user submissions</p>
+              </div>
+              <div className="bg-gray-100 p-3 rounded-full group-hover:bg-blue-500 group-hover:text-white transition-colors">
+                <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+              </div>
+            </div>
+          </a>
+          
+          <a 
+            href="/admin/analytics" 
+            className="bg-white p-6 shadow-sm rounded-md border-l-4 border-purple-500 hover:shadow-md transition-shadow group"
+          >
+            <div className="flex justify-between items-center">
+              <div>
+                <h3 className="font-serif text-xl mb-1">Analytics</h3>
+                <p className="text-gray-500 text-sm">Track performance metrics</p>
+              </div>
+              <div className="bg-gray-100 p-3 rounded-full group-hover:bg-purple-500 group-hover:text-white transition-colors">
+                <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+                </svg>
+              </div>
+            </div>
+          </a>
+        </div>
+        
+        {/* Stats cards */}
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
+          <div className="bg-white p-6 rounded-md shadow-sm">
+            <div className="text-sm text-gray-500 uppercase tracking-wide mb-1">Total Blogs</div>
+            <div className="text-3xl font-serif">{stats.totalBlogs}</div>
+          </div>
+          
+          <div className="bg-white p-6 rounded-md shadow-sm">
+            <div className="text-sm text-gray-500 uppercase tracking-wide mb-1">Pending Approval</div>
+            <div className="text-3xl font-serif">{stats.pendingApprovals}</div>
+          </div>
+          
+          <div className="bg-white p-6 rounded-md shadow-sm">
+            <div className="text-sm text-gray-500 uppercase tracking-wide mb-1">Published Today</div>
+            <div className="text-3xl font-serif">{stats.publishedToday}</div>
+          </div>
+          
+          <div className="bg-white p-6 rounded-md shadow-sm">
+            <div className="text-sm text-gray-500 uppercase tracking-wide mb-1">Total Views</div>
+            <div className="text-3xl font-serif">{stats.totalViews.toLocaleString()}</div>
+          </div>
+        </div>
+        
+        {/* Content tabs */}
+        <div className="mb-6">
+          <div className="border-b border-gray-200">
+            <nav className="-mb-px flex space-x-8">
+              <button
+                onClick={() => setActiveSection('overview')}
+                className={`pb-4 px-1 border-b-2 font-medium text-sm 
+                  ${activeSection === 'overview' 
+                    ? 'border-black text-black' 
+                    : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'}`}
+              >
+                Overview
+              </button>
+              <button
+                onClick={() => setActiveSection('approvals')}
+                className={`pb-4 px-1 border-b-2 font-medium text-sm 
+                  ${activeSection === 'approvals' 
+                    ? 'border-black text-black' 
+                    : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'}`}
+              >
+                Pending Approvals
+              </button>
+              <button
+                onClick={() => setActiveSection('analytics')}
+                className={`pb-4 px-1 border-b-2 font-medium text-sm 
+                  ${activeSection === 'analytics' 
+                    ? 'border-black text-black' 
+                    : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'}`}
+              >
+                Analytics
+              </button>
+            </nav>
+          </div>
+        </div>
+        
+        {/* Tab content */}
+        {isLoading ? (
+          <div className="flex justify-center py-12">
+            <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-black"></div>
+          </div>
+        ) : (
+          <>
+            {/* Overview Section */}
+            {activeSection === 'overview' && (
+              <div>
+                <div className="flex justify-between items-center mb-6">
+                  <h2 className="text-xl font-serif">Recent Blog Posts</h2>
+                  <div className="flex items-center space-x-2">
+                    <span className="text-sm text-gray-500">Filter:</span>
+                    <select
+                      value={filterCategory}
+                      onChange={(e) => setFilterCategory(e.target.value)}
+                      className="text-sm border-gray-300 rounded-md"
+                    >
+                      {categories.map(category => (
+                        <option key={category} value={category}>
+                          {category === 'all' ? 'All Categories' : category.charAt(0).toUpperCase() + category.slice(1)}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+                
+                <div className="bg-white shadow-sm rounded-md overflow-hidden">
+                  <table className="min-w-full divide-y divide-gray-200">
+                    <thead className="bg-gray-50">
+                      <tr>
+                        <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                          Post
+                        </th>
+                        <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                          Category
+                        </th>
+                        <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                          Author
+                        </th>
+                        <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                          Date
+                        </th>
+                        <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                          Views
+                        </th>
+                        <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                          Status
+                        </th>
+                      </tr>
+                    </thead>
+                    <tbody className="bg-white divide-y divide-gray-200">
+                      {filteredRecentBlogs.map((blog) => (
+                        <tr key={blog.id} className="hover:bg-gray-50">
+                          <td className="px-6 py-4">
+                            <div className="text-sm font-medium text-gray-900">{blog.title}</div>
+                            <div className="text-sm text-gray-500 truncate max-w-xs">{blog.excerpt}</div>
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap">
+                            <span className="px-2 py-1 inline-flex text-xs leading-5 font-semibold rounded-full bg-gray-100 text-gray-800">
+                              {blog.category}
+                            </span>
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                            {blog.author}
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                            {formatDate(blog.date)}
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                            {blog.views || 0}
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap">
+                            <span className={`px-2 py-1 inline-flex text-xs leading-5 font-semibold rounded-full 
+                              ${blog.status === 'published' ? 'bg-green-100 text-green-800' : 
+                                blog.status === 'pending' ? 'bg-yellow-100 text-yellow-800' : 
+                                'bg-red-100 text-red-800'}`}>
+                              {blog.status?.charAt(0).toUpperCase() + blog.status?.slice(1)}
+                            </span>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
                 </div>
               </div>
             )}
-          </div>
-          
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Category</label>
-              <select
-                name="category"
-                value={formData.category}
-                onChange={handleChange}
-                className="w-full border border-gray-300 rounded-md px-3 py-2"
-              >
-                <option value="fashion">Fashion</option>
-                <option value="beauty">Beauty</option>
-                <option value="lifestyle">Lifestyle</option>
-                <option value="latest-news">Latest News</option>
-                <option value="shopping">Shopping</option>
-              </select>
-            </div>
             
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Gender (if applicable)</label>
-              <select
-                name="gender"
-                value={formData.gender}
-                onChange={handleChange}
-                className="w-full border border-gray-300 rounded-md px-3 py-2"
-              >
-                <option value="women">Women</option>
-                <option value="men">Men</option>
-                <option value="">Not applicable</option>
-              </select>
-            </div>
-          </div>
-          
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Featured Image</label>
-            <div className="space-y-3">
-              {/* Hidden file input */}
-              <input
-                type="file"
-                ref={fileInputRef}
-                onChange={handleFileChange}
-                accept="image/*"
-                className="hidden"
-              />
-              
-              {/* Custom upload button and URL input */}
-              <div className="flex flex-col sm:flex-row gap-3">
-                <button
-                  type="button"
-                  onClick={handleBrowseClick}
-                  className="bg-gray-200 text-gray-800 px-4 py-2 rounded-md hover:bg-gray-300"
-                >
-                  {selectedFile ? 'Change Image' : 'Browse Images'}
-                </button>
+            {/* Approvals Section */}
+            {activeSection === 'approvals' && (
+              <div>
+                <h2 className="text-xl font-serif mb-6">Pending Approvals</h2>
                 
-                <div className="flex-1">
-                  <input
-                    type="text"
-                    name="image"
-                    value={formData.image}
-                    onChange={handleChange}
-                    placeholder="Or paste image URL here"
-                    className="w-full border border-gray-300 rounded-md px-3 py-2"
-                  />
-                  {selectedFile && (
-                    <p className="text-sm text-gray-500 mt-1">
-                      Selected file: {selectedFile.name} ({(selectedFile.size / 1024).toFixed(1)}KB)
-                    </p>
-                  )}
+                {pendingBlogs.length === 0 ? (
+                  <div className="text-center py-12 bg-white rounded-md shadow-sm">
+                    <svg xmlns="http://www.w3.org/2000/svg" className="h-12 w-12 mx-auto text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                    </svg>
+                    <h3 className="mt-2 text-sm font-medium text-gray-900">No pending approvals</h3>
+                    <p className="mt-1 text-sm text-gray-500">All user submissions have been reviewed.</p>
+                  </div>
+                ) : (
+                  <div className="space-y-6">
+                    {pendingBlogs.map((blog) => (
+                      <div key={blog.id} className="bg-white rounded-md shadow-sm overflow-hidden">
+                        <div className="p-6">
+                          <div className="flex justify-between">
+                            <h3 className="text-lg font-serif font-medium">{blog.title}</h3>
+                            <span className="px-2 py-1 text-xs font-semibold rounded-full bg-yellow-100 text-yellow-800">
+                              Pending
+                            </span>
+                          </div>
+                          <p className="mt-2 text-gray-600">{blog.excerpt}</p>
+                          <div className="mt-4 flex items-center text-sm text-gray-500">
+                            <span>By {blog.author}</span>
+                            <span className="mx-2">•</span>
+                            <span>{formatDate(blog.date)}</span>
+                            <span className="mx-2">•</span>
+                            <span className="px-2 py-1 rounded-full bg-gray-100 text-gray-800">
+                              {blog.category}
+                            </span>
+                          </div>
+                        </div>
+                        <div className="bg-gray-50 px-6 py-4 flex justify-end space-x-4">
+                          <button 
+                            onClick={() => handleReject(blog.id)}
+                            className="px-4 py-2 border border-red-300 text-red-700 rounded-md hover:bg-red-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500"
+                          >
+                            Reject
+                          </button>
+                          <button 
+                            onClick={() => handleApprove(blog.id)}
+                            className="px-4 py-2 bg-black text-white rounded-md hover:bg-gray-800 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-black"
+                          >
+                            Approve & Publish
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+            
+            {/* Analytics Section */}
+            {activeSection === 'analytics' && (
+              <div>
+                <h2 className="text-xl font-serif mb-6">Analytics Overview</h2>
+                
+                <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                  {/* Views chart */}
+                  <div className="bg-white p-6 rounded-md shadow-sm lg:col-span-2">
+                    <h3 className="text-lg font-medium mb-4">Views - Last 7 Days</h3>
+                    <div className="h-64">
+                      <div className="h-full flex items-end space-x-6">
+                        {analyticsData.viewsByDay.map((day, index) => (
+                          <div key={index} className="flex-1 flex flex-col items-center">
+                            <div className="w-full bg-purple-100 rounded-t-md" style={{ 
+                              height: `${(day.views / 500) * 100}%`,
+                              maxHeight: '90%'
+                            }}></div>
+                            <div className="text-xs text-gray-500 mt-2">{day.date.split('-')[2]}</div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                  
+                  {/* Top categories */}
+                  <div className="bg-white p-6 rounded-md shadow-sm">
+                    <h3 className="text-lg font-medium mb-4">Top Categories</h3>
+                    <div className="space-y-4">
+                      {analyticsData.topCategories.map((category, index) => (
+                        <div key={index}>
+                          <div className="flex justify-between items-center text-sm mb-1">
+                            <span className="font-medium">{category.name}</span>
+                            <span className="text-gray-500">{category.count} posts</span>
+                          </div>
+                          <div className="w-full bg-gray-200 rounded-full h-2">
+                            <div 
+                              className="bg-blue-500 h-2 rounded-full" 
+                              style={{ 
+                                width: `${(category.count / analyticsData.topCategories[0].count) * 100}%` 
+                              }}
+                            ></div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                  
+                  {/* Top authors */}
+                  <div className="bg-white p-6 rounded-md shadow-sm">
+                    <h3 className="text-lg font-medium mb-4">Top Authors</h3>
+                    <div className="space-y-4">
+                      {analyticsData.topAuthors.map((author, index) => (
+                        <div key={index} className="flex items-center">
+                          <div className="w-8 h-8 bg-gray-200 rounded-full flex items-center justify-center mr-3">
+                            {author.name.charAt(0).toUpperCase()}
+                          </div>
+                          <div className="flex-1">
+                            <div className="font-medium">{author.name}</div>
+                            <div className="text-sm text-gray-500">{author.views.toLocaleString()} views</div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                  
+                  {/* Additional metrics */}
+                  <div className="bg-white p-6 rounded-md shadow-sm lg:col-span-2">
+                    <h3 className="text-lg font-medium mb-4">Engagement Metrics</h3>
+                    <div className="grid grid-cols-3 gap-6">
+                      <div className="text-center">
+                        <div className="text-3xl font-serif">45%</div>
+                        <div className="text-sm text-gray-500 mt-1">Returning Visitors</div>
+                      </div>
+                      <div className="text-center">
+                        <div className="text-3xl font-serif">2:18</div>
+                        <div className="text-sm text-gray-500 mt-1">Avg. Time on Page</div>
+                      </div>
+                      <div className="text-center">
+                        <div className="text-3xl font-serif">3.2</div>
+                        <div className="text-sm text-gray-500 mt-1">Pages per Session</div>
+                      </div>
+                    </div>
+                  </div>
                 </div>
               </div>
-              
-              {/* Image preview */}
-              {(previewUrl || formData.image) && (
-                <div className="mt-2">
-                  <p className="text-sm text-gray-500 mb-2">Preview:</p>
-                  <img 
-                    src={previewUrl || formData.image} 
-                    alt="Preview" 
-                    className="h-48 object-cover rounded-md border border-gray-200" 
-                    onError={(e) => {
-                      (e.target as HTMLImageElement).src = '/placeholder-image.jpg';
-                      setMessage({text: 'Warning: Unable to load image preview', type: 'error'});
-                    }}
-                  />
-                </div>
-              )}
-            </div>
-          </div>
-          
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Author</label>
-            <input
-              type="text"
-              name="author"
-              value={formData.author}
-              onChange={handleChange}
-              className="w-full border border-gray-300 rounded-md px-3 py-2"
-              required
-            />
-          </div>
-          
-          <button
-            type="submit"
-            disabled={isLoading}
-            className="bg-black text-white px-6 py-2 rounded-md hover:bg-gray-800 disabled:bg-gray-400"
-          >
-            {isLoading ? 'Uploading...' : 'Publish Blog Post'}
-          </button>
-        </form>
-      )}
+            )}
+          </>
+        )}
+      </div>
       
-      {/* Manage Blogs Table */}
-      {activeTab === 'manage' && (
-        <div>
-          <div className="flex justify-between items-center mb-4">
-            <h2 className="text-xl font-medium">Manage Blog Posts</h2>
-            <button 
-              onClick={fetchBlogs}
-              className="text-sm bg-gray-100 px-3 py-1 rounded hover:bg-gray-200"
-              disabled={isLoadingBlogs}
-            >
-              {isLoadingBlogs ? 'Refreshing...' : 'Refresh'}
-            </button>
+      {/* Footer */}
+      <footer className="bg-gray-100 mt-16 py-8">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+          <div className="text-center text-gray-500 text-sm">
+            &copy; {new Date().getFullYear()} Avoure. All rights reserved.
           </div>
-          
-          {isLoadingBlogs ? (
-            <div className="text-center py-8">Loading blogs...</div>
-          ) : blogs.length === 0 ? (
-            <div className="text-center py-8 text-gray-500">No blog posts found</div>
-          ) : (
-            <div className="overflow-x-auto">
-              <table className="min-w-full divide-y divide-gray-200">
-                <thead className="bg-gray-50">
-                  <tr>
-                    <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      Title
-                    </th>
-                    <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      Category
-                    </th>
-                    <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      Author
-                    </th>
-                    <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      Date
-                    </th>
-                    <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      Actions
-                    </th>
-                  </tr>
-                </thead>
-                <tbody className="bg-white divide-y divide-gray-200">
-                  {blogs.map((blog) => (
-                    <tr key={blog.id} className="hover:bg-gray-50">
-                      <td className="px-6 py-4 whitespace-nowrap">
-                        <div className="flex items-center">
-                          <div className="h-10 w-10 flex-shrink-0">
-                            <img 
-                              className="h-10 w-10 rounded-full object-cover" 
-                              src={blog.image || '/placeholder-image.jpg'} 
-                              alt="" 
-                              onError={(e) => {
-                                (e.target as HTMLImageElement).src = '/placeholder-image.jpg';
-                              }}
-                            />
-                          </div>
-                          <div className="ml-4">
-                            <div className="text-sm font-medium text-gray-900">{blog.title}</div>
-                            <div className="text-xs text-gray-500">
-                              {blog.additionalImages && blog.additionalImages.length > 0 ? (
-                                <span className="text-xs text-green-600">
-                                  {blog.additionalImages.length} additional {blog.additionalImages.length === 1 ? 'image' : 'images'}
-                                </span>
-                              ) : null}
-                            </div>
-                          </div>
-                        </div>
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap">
-                        <span className="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-gray-100 text-gray-800">
-                          {blog.category} {blog.gender ? `• ${blog.gender}` : ''}
-                        </span>
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                        {blog.author}
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                        {formatDate(blog.date)}
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
-                        <div className="flex space-x-2">
-                          <button
-                            onClick={() => navigate(`/blogs/${blog.id}`)}
-                            className="text-indigo-600 hover:text-indigo-900"
-                          >
-                            View
-                          </button>
-                          <button
-                            onClick={() => navigate(`/admin/edit/${blog.id}`)}
-                            className="text-blue-600 hover:text-blue-900"
-                          >
-                            Edit
-                          </button>
-                          <button
-                            onClick={() => handleDeleteBlog(blog.id)}
-                            disabled={deleteInProgress === blog.id}
-                            className="text-red-600 hover:text-red-900 disabled:text-gray-400"
-                          >
-                            {deleteInProgress === blog.id ? 'Deleting...' : 'Delete'}
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
         </div>
-      )}
+      </footer>
     </div>
   );
 }
 
-export default AdminPage;
+export default AvoureAdminDashboard;

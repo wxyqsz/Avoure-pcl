@@ -17,6 +17,7 @@ import Lifestyle from "../src/pages/Lifestyle";
 import Shopping from "../src/pages/Shopping";
 import SetupAdmin from './pages/SetupAdmin';
 import UserBlogs from './pages/UserBlogs';
+import ModerateContent from "./pages/ModerateContent";
 
 function App() {
   const [supabaseInitialized, setSupabaseInitialized] = useState(false);
@@ -58,13 +59,14 @@ function App() {
             <Route path="/blogs" element={<Blogs />} />
             <Route path="/admin" element={<AdminDashboard />} />
             <Route path="/article/:id" element={<ArticlePage />} />
-            <Route path="/admin-upload" element={<AdminUpload />} />
+            <Route path="/admin/upload" element={<AdminUpload />} />
             <Route path="/fashion" element={<Fashion />} />
             <Route path="/beauty" element={<Beauty />} />
             <Route path="/lifestyle" element={<Lifestyle />} />
             <Route path="/shopping" element={<Shopping />} />
             <Route path="/setup-admin" element={<SetupAdmin />} />
             <Route path="/admin/user-blogs" element={<UserBlogs />} />
+            <Route path="/admin/moderate" element={<ModerateContent />} />
             {/* Add more routes as needed */}
           </Routes>
         </div>

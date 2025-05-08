@@ -2,7 +2,6 @@ import { useState, useEffect } from 'react';
 import { Eye, EyeOff, ArrowRight, AlertCircle } from 'lucide-react';
 import { Link, useNavigate } from 'react-router-dom';
 import { supabase } from '../supabaseClient';
-import { checkAuth } from '../auth/authUtils';
 
 export default function AvoureSignIn() {
   const navigate = useNavigate();
@@ -16,57 +15,89 @@ export default function AvoureSignIn() {
     email: false,
     password: false
   });
-  const [authStatus, setAuthStatus] = useState<string | null>(null);
   const [isCheckingAuth, setIsCheckingAuth] = useState(true);
-  const [timeoutId, setTimeoutId] = useState<NodeJS.Timeout | null>(null);
-  const [debugMode, setDebugMode] = useState(false);
-  const [authLogs, setAuthLogs] = useState<string[]>([]);
+  const [authLogs, setAuthLogs] = useState<{ message: string; type: string }[]>([]);
+  const [supabaseStatus, setSupabaseStatus] = useState('Checking Supabase connection...');
 
-  // Helper function to add timestamped logs
-  const addLog = (message: string) => {
+  // Helper function to add timestamped logs with more visibility
+  const addLog = (message: string, type: 'info' | 'error' | 'success' = 'info') => {
     const timestamp = new Date().toISOString().substring(11, 23); // HH:MM:SS.mmm
     const logEntry = `[${timestamp}] ${message}`;
     
-    console.log(logEntry); // Ensure logs are visible in browser console
-    setAuthLogs(prev => [...prev, logEntry]);
+    console.log(`%c${logEntry}`, type === 'error' ? 'color: red; font-weight: bold' : 
+                              type === 'success' ? 'color: green; font-weight: bold' : 
+                              'color: blue');
     
-    // Update auth status for UI feedback
-    setAuthStatus(message);
+    setAuthLogs(prev => [...prev, { message: logEntry, type }]);
   };
 
+  // Test Supabase connection on component mount
+  useEffect(() => {
+    const testSupabaseConnection = async () => {
+      try {
+        addLog('Testing Supabase connection...');
+        
+        // Check if supabase client is properly initialized
+        if (!supabase || typeof supabase.from !== 'function') {
+          throw new Error('Supabase client is not properly initialized');
+        }
+        
+        // Test authentication service
+        const { error: authError } = await supabase.auth.getSession();
+        
+        if (authError) {
+          throw new Error(`Auth service error: ${authError.message}`);
+        }
+        
+        addLog('Auth service is working properly', 'success');
+        
+        // Test database connection with a simple query
+        const { error: testError } = await supabase
+          .from('subscriptions')
+          .select('id')
+          .limit(1);
+        
+        if (testError) {
+          throw new Error(`Database query error: ${testError.message}`);
+        }
+        
+        addLog('Database connection successful', 'success');
+        setSupabaseStatus('Supabase connection verified ✓');
+        
+        // Check Supabase version and configuration
+        const { data: versionData, error: versionError } = await supabase
+          .rpc('version', {});
+        
+        if (!versionError && versionData) {
+          addLog(`Supabase version: ${JSON.stringify(versionData)}`, 'success');
+        }
+        
+      } catch (err) {
+        console.error('Supabase connection test failed:', err);
+        addLog(`Supabase connection error: ${err instanceof Error ? err.message : 'Unknown error'}`, 'error');
+        setSupabaseStatus(`Supabase connection failed: ${err instanceof Error ? err.message : 'Unknown error'}`);
+      }
+    };
+    
+    testSupabaseConnection();
+  }, []);
+
   // Helper function to normalize email addresses
-  const normalizeEmail = (email: string): string => {
+  const normalizeEmail = (email: string) => {
     return email.trim().toLowerCase();
   };
 
-  // Simplified password handler - just direct comparison
-  const checkPassword = (storedPassword: string, inputPassword: string): boolean => {
-    if(!storedPassword || !inputPassword) {
-      addLog('Missing password data');
-      return false;
-    }
-    
-    addLog(`Comparing passwords (stored: ${storedPassword.length} chars, input: ${inputPassword.length} chars)`);
-    return inputPassword === storedPassword;
-  };
-
   // Validation functions
-  const validateEmail = (email: string): boolean => {
+  const validateEmail = (email: string) => {
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     return emailRegex.test(email);
   };
 
-  const validatePassword = (password: string): boolean => {
+  const validatePassword = (password: string) => {
     return password.length >= 6;
   };
 
-  // Clear timeout when component unmounts
-  useEffect(() => {
-    return () => {
-      if (timeoutId) clearTimeout(timeoutId);
-    };
-  }, [timeoutId]);
-
+  // Get form errors
   const getFormErrors = () => {
     const errors = [];
     
@@ -98,167 +129,103 @@ export default function AvoureSignIn() {
     });
   };
 
-  // Fixed admin authentication with better error handling
-  const handleAdminAuth = async (normalizedEmail: string, password: string) => {
-    const startTime = Date.now();
-    addLog('Starting admin authentication');
+  // Determine if user is admin or regular subscriber
+  const determineUserRole = async (userId: string, userEmail: string) => {
+    addLog('Determining user role...', 'info');
     
     try {
-      // FIXED: Make sure to set a reasonable timeout for the Supabase call
-      const { data, error } = await supabase.auth.signInWithPassword({
-        email: normalizedEmail,
-        password
-      });
-
-      const duration = Date.now() - startTime;
-      addLog(`Admin auth completed in ${duration}ms`);
-
-      if (error) {
-        addLog(`Admin auth failed: ${error.message}`);
-        return { success: false, error, duration };
-      }
-
-      if (data?.user) {
-        addLog(`Admin auth successful for user ID: ${data.user.id}`);
-        
-        // Store auth data
-        localStorage.setItem('authToken', data.session?.access_token || '');
-        localStorage.setItem('user', JSON.stringify({
-          id: data.user.id,
-          email: data.user.email,
-          name: data.user.user_metadata?.full_name || 'Admin',
-          role: 'admin'
-        }));
-        
-        // Add a flag to prevent authentication loop
-        localStorage.setItem('adminAuthComplete', 'true');
-        
-        return { success: true, role: 'admin', duration };
+      // First check the auth.users metadata for admin flag
+      // In Supabase, admin users might be created with specific metadata
+      const { data: userData, error: userError } = await supabase.auth.getUser();
+      
+      if (userError) {
+        addLog(`Error getting user data: ${userError.message}`, 'error');
+        return { role: 'subscriber', fullName: 'User' }; // Default to subscriber on error
       }
       
-      addLog('Admin auth failed: No user data returned');
-      return { success: false, duration };
-    } catch (err) {
-      const duration = Date.now() - startTime;
-      addLog(`Admin auth error after ${duration}ms: ${err instanceof Error ? err.message : 'Unknown error'}`);
-      return { success: false, error: err, duration };
-    }
-  };
-
-  // Fixed subscriber authentication with proper error handling
-  const handleSubscriberAuth = async (normalizedEmail: string, password: string) => {
-    const startTime = Date.now();
-    addLog('Starting subscriber authentication');
-    
-    try {
-      // Test database connection first
-      addLog('Attempting to connect to Supabase');
+      // Check if metadata contains admin flag
+      if (userData?.user?.user_metadata?.is_admin === true) {
+        addLog('User has admin flag in metadata', 'success');
+        return { 
+          role: 'admin', 
+          fullName: userData.user.user_metadata.full_name || 'Admin' 
+        };
+      }
       
-      // FIXED: Make sure we don't time out on slow connections
-      const { data: subscriber, error } = await supabase
+      // Check user_profiles table for role
+      addLog('Checking user_profiles table for role...', 'info');
+      const { data: profileData, error: profileError } = await supabase
+        .from('user_profiles')
+        .select('role, full_name')
+        .eq('user_id', userId);
+        
+      if (!profileError && profileData && profileData.length > 0) {
+        addLog(`Found user in user_profiles with role: ${profileData[0].role}`, 'success');
+        return {
+          role: profileData[0].role || 'subscriber',
+          fullName: profileData[0].full_name || 'User'
+        };
+      }
+      
+      // If no profile exists, check if user is in subscriptions table
+      addLog('Checking subscriptions table...', 'info');
+      const { data: subData, error: subError } = await supabase
         .from('subscriptions')
-        .select('id, email, full_name, password_hash, created_at')
-        .eq('email', normalizedEmail)
-        .single();
-      
-      const dbQueryDuration = Date.now() - startTime;
-      addLog(`Database query completed in ${dbQueryDuration}ms`);
-      
-      // Debug log the actual response
-      if (debugMode) {
-        addLog(`Query response: ${JSON.stringify({ 
-          hasSubscriber: !!subscriber, 
-          errorCode: error && 'code' in error ? error.code : undefined,
-          errorMessage: error?.message 
-        })}`);
-      }
-      
-      if (error) {
-        // Check if this is "record not found" error (PGRST116)
-        if ('code' in error && error.code === 'PGRST116') {
-          addLog('No subscriber account found with this email');
-          return { success: false, error: new Error('Invalid email or password'), duration: Date.now() - startTime };
+        .select('full_name')
+        .eq('email', userEmail);
+        
+      if (!subError && subData && subData.length > 0) {
+        // User exists in subscription table - create profile with subscriber role
+        addLog('User found in subscriptions table', 'success');
+        
+        // Create a profile for this user
+        const { error: createError } = await supabase
+          .from('user_profiles')
+          .insert({
+            user_id: userId,
+            email: userEmail,
+            full_name: subData[0].full_name || 'Subscriber',
+            role: 'subscriber'
+          });
+          
+        if (createError) {
+          addLog(`Error creating profile: ${createError.message}`, 'error');
+        } else {
+          addLog('Created subscriber profile', 'success');
         }
         
-        addLog(`Subscriber lookup error: ${error.message}`);
-        return { success: false, error, duration: Date.now() - startTime };
-      }
-
-      if (!subscriber) {
-        addLog('No subscriber data returned');
-        return { success: false, error: new Error('No account found with this email'), duration: Date.now() - startTime };
-      }
-
-      addLog(`Found subscriber ID: ${subscriber.id}`);
-      
-      // Check if password_hash exists
-      if (!subscriber.password_hash) {
-        addLog('Invalid subscriber account: Missing password');
-        return { success: false, error: new Error('Invalid account data'), duration: Date.now() - startTime };
-      }
-
-      // Check password with consistent comparison logic
-      const passwordMatch = checkPassword(subscriber.password_hash, password);
-      
-      if (passwordMatch) {
-        addLog('Subscriber authentication successful');
-        
-        try {
-          createSubscriberSession(subscriber);
-          return { success: true, role: 'subscriber', duration: Date.now() - startTime };
-        } catch (sessionError) {
-          addLog(`Failed to create subscriber session: ${sessionError instanceof Error ? sessionError.message : 'Unknown error'}`);
-          return { success: false, error: new Error('Authentication failed'), duration: Date.now() - startTime };
-        }
+        return {
+          role: 'subscriber',
+          fullName: subData[0].full_name || 'Subscriber'
+        };
       }
       
-      // If we get here, password comparison failed
-      addLog('Invalid subscriber password');
-      return { success: false, error: new Error('Invalid email or password'), duration: Date.now() - startTime };
+      // Final check - could be an admin user without metadata
+      // This is where we'd check if the user was created through setup-admin
+      addLog('Checking if user is admin without explicit flags...', 'info');
       
-    } catch (err) {
-      const duration = Date.now() - startTime;
-      addLog(`Subscriber auth error after ${duration}ms: ${err instanceof Error ? err.message : 'Unknown error'}`);
-      return { success: false, error: err, duration };
-    }
-  };
-  
-  // Helper function to create subscriber session
-  const createSubscriberSession = (subscriber: any) => {
-    addLog('Creating subscriber session');
-    
-    // FIXED: Add try/catch to handle potential JSON errors
-    try {
-      // Create subscriber session
-      const userData = {
-        id: subscriber.id,
-        email: subscriber.email,
-        name: subscriber.full_name,
-        role: 'subscriber' 
+      // You might have a specific table for admins or some other way to identify them
+      // For now, we'll assume any authenticated user not in subscriptions is an admin
+      return {
+        role: 'admin', // Default to admin if not found in subscriptions
+        fullName: userData?.user?.user_metadata?.full_name || 'Admin User'
       };
-
-      localStorage.setItem('authToken', `sub_${subscriber.id}_${Date.now()}`);
-      localStorage.setItem('user', JSON.stringify(userData));
-      // FIXED: Add a flag similar to admin to prevent loop
-      localStorage.setItem('subscriberAuthComplete', 'true');
       
-      addLog('Subscriber session created successfully');
     } catch (err) {
-      addLog(`Error creating subscriber session: ${err instanceof Error ? err.message : 'Unknown error'}`);
-      throw err; // Re-throw to handle in calling function
+      addLog(`Error determining role: ${err instanceof Error ? err.message : 'Unknown error'}`, 'error');
+      return { role: 'subscriber', fullName: 'User' }; // Default on error
     }
   };
 
-  // Improved submit handler for reliability
+  // Updated authentication handler
   const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     
     // Reset status, errors, and logs
-    setAuthStatus(null);
     setError('');
     setAuthLogs([]);
     
-    const overallStartTime = Date.now();
+    const startTime = Date.now();
     addLog('Starting authentication process');
     
     // Touch all fields to show validation errors
@@ -267,326 +234,117 @@ export default function AvoureSignIn() {
     const validationError = getFormErrors();
     if (validationError) {
       setError(validationError);
-      addLog(`Validation error: ${validationError}`);
+      addLog(`Validation error: ${validationError}`, 'error');
       return;
     }
     
     setIsSubmitting(true);
     
-    // Clear any existing timeout
-    if (timeoutId) {
-      clearTimeout(timeoutId);
-      addLog('Cleared previous timeout');
-    }
-    
-    // FIXED: Set a reasonable timeout of 45 seconds to accommodate slower connections
-    const timeout = setTimeout(() => {
-      setIsSubmitting(false);
-      setError('Request timed out. Please try again later.');
-      addLog('Authentication timed out after 45 seconds');
-    }, 45000);
-    
-    setTimeoutId(timeout);
-    addLog('Set authentication timeout for 45 seconds');
-    
-    const normalizedEmail = normalizeEmail(email);
-    addLog(`Normalized email: ${normalizedEmail}`);
-    
     try {
-      // Try admin authentication first
-      addLog('Trying admin authentication first');
+      const normalizedEmail = normalizeEmail(email);
+      addLog(`Attempting to sign in with email: ${normalizedEmail}`);
       
-      const adminResult = await handleAdminAuth(normalizedEmail, password);
+      // Step 1: Try to sign in with Supabase Auth
+      addLog('Step 1: Calling supabase.auth.signInWithPassword...');
+      const { data: authData, error: authError } = await supabase.auth.signInWithPassword({
+        email: normalizedEmail,
+        password
+      });
+
+      // Detailed error handling for auth errors
+      if (authError) {
+        addLog(`Auth error details: ${JSON.stringify(authError)}`, 'error');
+        throw new Error(authError.message || 'Invalid email or password');
+      }
+
+      if (!authData?.user) {
+        addLog('No user data returned from auth service', 'error');
+        throw new Error('No user data returned');
+      }
+
+      addLog(`Authentication successful for user ID: ${authData.user.id}`, 'success');
       
-      if (adminResult.success) {
-        // Admin login successful
-        addLog(`Admin auth successful (took ${adminResult.duration}ms)`);
-        
-        // FIXED: Clean up properly
-        if (timeoutId) {
-          clearTimeout(timeoutId);
-          setTimeoutId(null);
-          addLog('Cleared timeout');
-        }
-        
-        // Save remembered email if selected
-        if (rememberMe) {
-          localStorage.setItem('rememberedEmail', normalizedEmail);
-          addLog('Saved remembered email');
-        } else {
-          localStorage.removeItem('rememberedEmail');
-        }
-        
-        // FIXED: Complete all state updates BEFORE navigation
-        setIsSubmitting(false);
-        
-        // FIXED: Use a more reliable approach for navigation
-        addLog('Admin login successful - redirecting to admin dashboard');
+      // Store the auth token
+      localStorage.setItem('authToken', authData.session?.access_token || '');
+      addLog('Auth token stored in localStorage', 'success');
+      
+      // Step 2: Determine if user is admin or subscriber
+      const { role, fullName } = await determineUserRole(authData.user.id, normalizedEmail);
+      
+      addLog(`User determined to have role: ${role}`, 'success');
+      
+      // Store user info
+      localStorage.setItem('user', JSON.stringify({
+        id: authData.user.id,
+        email: authData.user.email,
+        name: fullName,
+        role: role
+      }));
+      
+      // Save remembered email if selected
+      if (rememberMe) {
+        localStorage.setItem('rememberedEmail', normalizedEmail);
+      } else {
+        localStorage.removeItem('rememberedEmail');
+      }
+      
+      setIsSubmitting(false);
+      
+      // Redirect based on role
+      if (role === 'admin') {
+        addLog('Admin login successful - redirecting to admin dashboard', 'success');
         setTimeout(() => {
           navigate('/admin');
         }, 500);
-        
-        return;
-      }
-      
-      // Admin auth failed, try subscriber auth
-      addLog('Admin auth failed, trying subscriber authentication');
-      
-      const subscriberResult = await handleSubscriberAuth(normalizedEmail, password);
-      
-      if (subscriberResult.success) {
-        // Subscriber login successful
-        addLog(`Subscriber authentication successful (took ${subscriberResult.duration}ms)`);
-        
-        // FIXED: Clean up properly
-        if (timeoutId) {
-          clearTimeout(timeoutId);
-          setTimeoutId(null);
-          addLog('Cleared timeout');
-        }
-        
-        // Save remembered email if selected
-        if (rememberMe) {
-          localStorage.setItem('rememberedEmail', normalizedEmail);
-          addLog('Saved remembered email');
-        } else {
-          localStorage.removeItem('rememberedEmail');
-        }
-        
-        // FIXED: Complete all state updates BEFORE navigation
-        setIsSubmitting(false);
-        
-        // FIXED: Use a more reliable approach for navigation
-        addLog('Subscriber login successful - redirecting to home page');
+      } else {
+        addLog('Subscriber login successful - redirecting to home page', 'success');
         setTimeout(() => {
           navigate('/');
         }, 500);
-        
-        return;
       }
-      
-      // Both authentication methods failed
-      addLog('Both authentication methods failed');
-      setError('Invalid email or password. Please check your credentials and try again.');
       
     } catch (err) {
-      addLog(`Sign in error: ${err instanceof Error ? err.message : 'Unknown error'}`);
-      setError(err instanceof Error ? err.message || 'Login failed. Please try again.' : 'An unexpected error occurred');
-    } finally {
-      const totalDuration = Date.now() - overallStartTime;
-      addLog(`Authentication process completed in ${totalDuration}ms`);
-      
-      // Clear the timeout in finally block
-      if (timeoutId) {
-        clearTimeout(timeoutId);
-        setTimeoutId(null);
-        addLog('Cleared timeout in finally block');
-      }
-      
+      const duration = Date.now() - startTime;
+      addLog(`Authentication failed after ${duration}ms: ${err instanceof Error ? err.message : 'Unknown error'}`, 'error');
+      setError(err instanceof Error ? err.message : 'Login failed. Please try again.');
       setIsSubmitting(false);
+    } finally {
+      const duration = Date.now() - startTime;
+      addLog(`Authentication process completed in ${duration}ms`);
     }
   };
-  
-  // Enable debug mode with key combination (Ctrl+Shift+D)
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.ctrlKey && e.shiftKey && e.key === 'D') {
-        setDebugMode(prev => !prev);
-        console.log('Debug mode:', !debugMode);
-      }
-    };
-    
-    window.addEventListener('keydown', handleKeyDown);
-    return () => {
-      window.removeEventListener('keydown', handleKeyDown);
-    };
-  }, [debugMode]);
 
-  // FIXED: Improved session check on mount
+  // Modified session check - only loads email if remembered, but doesn't auto-login
   useEffect(() => {
-    const checkExistingSession = async () => {
+    const initializeSignIn = async () => {
       setIsCheckingAuth(true);
-      const sessionStartTime = Date.now();
-      console.log('Checking for existing session');
-      
-      // Safety timeout for auth check
-      const authCheckTimeout = setTimeout(() => {
-        console.log('Auth check timed out after 10 seconds');
-        setIsCheckingAuth(false);
-      }, 10000);
+      addLog('Initializing sign-in page');
       
       try {
-        // First, check if auth data exists in localStorage
-        const storedUser = localStorage.getItem('user');
-        const authToken = localStorage.getItem('authToken');
+        // Clear any existing session data to force manual login
+        addLog('Clearing any existing session data', 'info');
+        await supabase.auth.signOut();
+        localStorage.removeItem('authToken');
+        localStorage.removeItem('user');
         
-        // If no stored auth data, skip further checks
-        if (!storedUser || !authToken) {
-          console.log('No stored auth data found');
-          clearTimeout(authCheckTimeout);
-          setIsCheckingAuth(false);
-          return;
+        // Load remembered email if enabled
+        const rememberedEmail = localStorage.getItem('rememberedEmail');
+        if (rememberedEmail) {
+          addLog('Loading remembered email', 'info');
+          setEmail(rememberedEmail);
+          setRememberMe(true);
         }
         
-        console.log('Found stored auth data, validating...');
-        
-        try {
-          // Parse storedUser to check role directly
-          const userData = JSON.parse(storedUser);
-          const role = userData?.role;
-          
-          // FIXED: Check BOTH admin and subscriber completion flags
-          const adminAuthComplete = localStorage.getItem('adminAuthComplete');
-          const subscriberAuthComplete = localStorage.getItem('subscriberAuthComplete');
-          
-          if (adminAuthComplete || subscriberAuthComplete) {
-            console.log('Just completed authentication, skipping redirect');
-            localStorage.removeItem('adminAuthComplete');
-            localStorage.removeItem('subscriberAuthComplete');
-            clearTimeout(authCheckTimeout);
-            setIsCheckingAuth(false);
-            return;
-          }
-          
-          // Double check with checkAuth for security
-          const authResult = await checkAuth();
-          const isAuthenticated = authResult?.success || false;
-          
-          if (isAuthenticated) {
-            console.log(`User is authenticated as ${role} - session check took ${Date.now() - sessionStartTime}ms`);
-            
-            // FIXED: More reliable navigation approach
-            setTimeout(() => {
-              if (role === 'admin') {
-                navigate('/admin');
-              } else if (role === 'subscriber') {
-                navigate('/');
-              }
-            }, 500);
-          } else {
-            // If checkAuth says not authenticated, clear stored data
-            console.log('Stored auth data is invalid, clearing...');
-            localStorage.removeItem('authToken');
-            localStorage.removeItem('user');
-          }
-        } catch (error) {
-          console.log('Auth validation failed, proceeding to login screen');
-          // Don't clear auth data on error, just continue to login screen
-        }
       } catch (err) {
-        console.log(`Auth check error: ${err instanceof Error ? err.message : 'Unknown error'}`);
+        addLog(`Initialization error: ${err instanceof Error ? err.message : 'Unknown error'}`, 'error');
       } finally {
-        clearTimeout(authCheckTimeout);
         setIsCheckingAuth(false);
-        console.log(`Session check completed in ${Date.now() - sessionStartTime}ms`);
+        addLog('Sign-in page ready for manual login');
       }
     };
 
-    // Load remembered email
-    const rememberedEmail = localStorage.getItem('rememberedEmail');
-    if (rememberedEmail) {
-      setEmail(rememberedEmail);
-      setRememberMe(true);
-    }
-
-    checkExistingSession();
-  }, [navigate]);
-
-  const handleForgotPassword = async () => {
-    if (!email || !validateEmail(email)) {
-      setFormTouched({ ...formTouched, email: true });
-      setError('Please enter a valid email address');
-      return;
-    }
-
-    const normalizedEmail = normalizeEmail(email);
-    setIsSubmitting(true);
-    
-    // Clear logs and set status
-    setAuthLogs([]);
-    addLog(`Starting password reset for: ${normalizedEmail}`);
-    
-    // Clear any existing timeout
-    if (timeoutId) {
-      clearTimeout(timeoutId);
-    }
-    
-    // Set timeout to prevent endless loading state
-    const timeout = setTimeout(() => {
-      setIsSubmitting(false);
-      setError('Request timed out. Please try again later.');
-      addLog('Password reset request timed out after 20 seconds');
-    }, 20000);
-    
-    setTimeoutId(timeout);
-
-    try {
-      // First check if it's an admin
-      addLog('Checking admin accounts');
-      
-      const { error: adminError } = await supabase.auth.resetPasswordForEmail(normalizedEmail);
-      
-      if (!adminError) {
-        // Clear timeout if successful
-        if (timeoutId) {
-          clearTimeout(timeoutId);
-          setTimeoutId(null);
-        }
-        addLog('Admin reset email sent successfully');
-        
-        // FIXED: Complete state updates before navigation
-        setIsSubmitting(false);
-        
-        setTimeout(() => {
-          navigate('/reset-password?email=' + encodeURIComponent(normalizedEmail));
-        }, 500);
-        return;
-      }
-
-      // If not admin, check subscriptions table
-      addLog('Checking subscriber accounts');
-      
-      const { data: subscriber, error: subError } = await supabase
-        .from('subscriptions')
-        .select('email')
-        .eq('email', normalizedEmail)
-        .single();
-
-      if (subError && 'code' in subError && subError.code !== 'PGRST116') {
-        // Real error, not just "not found"
-        addLog(`Subscriber check error: ${subError.message}`);
-        throw new Error('Error checking subscriber');
-      }
-
-      if (subscriber) {
-        addLog('Subscriber account found, proceeding to reset page');
-        
-        // FIXED: Complete state updates before navigation
-        setIsSubmitting(false);
-        
-        setTimeout(() => {
-          navigate('/reset-password?email=' + encodeURIComponent(normalizedEmail));
-        }, 500);
-      } else {
-        addLog('No account found with this email');
-        setError('No account found with this email');
-      }
-    } catch (err) {
-      if (err instanceof Error && err.message.includes('timed out')) {
-        addLog('Password reset timed out');
-        setError('Request timed out. Please try again later.');
-      } else {
-        addLog(`Password reset error: ${err instanceof Error ? err.message : 'Unknown error'}`);
-        setError(err instanceof Error ? err.message : 'Failed to send reset email');
-      }
-    } finally {
-      if (timeoutId) {
-        clearTimeout(timeoutId);
-        setTimeoutId(null);
-      }
-      setIsSubmitting(false);
-    }
-  };
+    initializeSignIn();
+  }, []);
 
   // Show loading indicator while checking authentication
   if (isCheckingAuth) {
@@ -618,6 +376,18 @@ export default function AvoureSignIn() {
       <div className="bg-white p-8 shadow-md max-w-md w-full">
         <h2 className="text-2xl font-light mb-6 text-center">Sign In</h2>
         
+        {/* Supabase Connection Status */}
+        <div className={`mb-6 p-3 ${
+          supabaseStatus.includes('failed') 
+            ? 'bg-red-50 text-red-700 border-red-200' 
+            : supabaseStatus.includes('verified') 
+                ? 'bg-green-50 text-green-700 border-green-200'
+                : 'bg-blue-50 text-blue-700 border-blue-200'
+        } text-sm border flex items-start`}>
+          <AlertCircle size={16} className="mr-2 mt-0.5 flex-shrink-0" />
+          <span>{supabaseStatus}</span>
+        </div>
+        
         {error && (
           <div className="mb-6 p-3 bg-red-50 text-red-700 text-sm border border-red-200 flex items-start">
             <AlertCircle size={16} className="mr-2 mt-0.5 flex-shrink-0" />
@@ -625,17 +395,18 @@ export default function AvoureSignIn() {
           </div>
         )}
         
-        {debugMode && (
-          <div className="mb-4 p-3 bg-blue-50 text-blue-700 border border-blue-200 text-xs overflow-y-auto max-h-40">
-            <strong>Auth Logs:</strong>
-            <ul className="mt-1">
-              {authLogs.map((log, index) => (
-                <li key={index} className="mb-1">{log}</li>
-              ))}
-              {authStatus && <li className="font-bold">{authStatus}</li>}
-            </ul>
-          </div>
-        )}
+        {/* Debug Logs */}
+        <div className="mb-4 p-3 bg-blue-50 border border-blue-200 text-xs overflow-y-auto max-h-40">
+          <strong>Auth Logs:</strong>
+          <ul className="mt-1">
+            {authLogs.map((log, index) => (
+              <li key={index} className={`mb-1 ${
+                log.type === 'error' ? 'text-red-700' : 
+                log.type === 'success' ? 'text-green-700' : 'text-blue-700'
+              }`}>{log.message}</li>
+            ))}
+          </ul>
+        </div>
         
         <form onSubmit={handleSubmit}>
           <div className="mb-6">
@@ -701,7 +472,6 @@ export default function AvoureSignIn() {
             </label>
             <button 
               type="button" 
-              onClick={handleForgotPassword}
               className="text-sm text-gray-600 hover:underline"
             >
               Forgot password?
@@ -742,7 +512,6 @@ export default function AvoureSignIn() {
       {/* Footer */}
       <div className="mt-8 text-center text-xs text-gray-500">
         <p>© {new Date().getFullYear()} Avoure India. All rights reserved.</p>
-        {debugMode && <p className="mt-1 text-gray-400">Debug Mode Active (Ctrl+Shift+D)</p>}
       </div>
     </div>
   );
